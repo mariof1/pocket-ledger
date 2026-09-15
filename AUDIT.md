@@ -66,3 +66,17 @@ The current server was checked for loopback binding, unauthenticated endpoint pr
 An array or object supplied as an export bill frequency or commute bank-holiday region previously raised a server error during import. Both now return an input error; failed imports roll back the entire transaction. The regression suite passed 24 Flask tests and 6 mortgage-guide tests, along with Python compilation and JavaScript syntax. The live SQLite integrity and foreign-key checks passed. A file-inclusion review confirmed that Git ignores `instance/`, signing keys, database backups, the virtual environment and bytecode. No account records or credentials are in the planned commit.
 
 The populated Savings goals screen showed a target date beside a much later completion estimate without explaining the gap. It now warns when the saved monthly pace misses the date, estimates the amount needed over the available months, and flags passed deadlines. The filled card was checked again in the browser. These are calendar-month planning estimates, since the app does not record a day of month for goal contributions.
+
+## Deep audit — 15 September 2026
+
+This pass reviewed account transfer validation and atomicity, login throttling, account/profile access checks, month aggregation, bill occurrence import, commuting math, lender-guide inputs, response protections, runtime dependencies, repository exclusions, and the populated desktop Overview, Regular bills, bill-import review, and both mortgage views. The browser review was read-only against the existing account. The live database passed SQLite integrity and foreign-key checks before deployment.
+
+| Area | Finding and change |
+| --- | --- |
+| Account import | An export with records but an empty category-suggestions list restored the records without making their categories available in pickers until a server restart. Import now rebuilds missing per-profile category suggestions from transactions, budgets, and bills within the same transaction, and reports the added category count. |
+| Spending breakdown | Older records can retain differently capitalised versions of a category. The monthly overview now groups them case-insensitively and displays the saved category name, so one budget/category does not appear as separate spending rows. |
+| Sign-in throttling | Failures were limited only per IP and email pair; cycling email addresses evaded the limit and created an unlimited number of tracking rows. The server now also caps failures from one IP at 30 per 15 minutes and removes expired tracking rows on subsequent sign-in attempts. The existing five-failure per-account/IP limit remains. |
+
+The isolated regression suite passed 26 Flask tests, 6 mortgage-guide tests, Python compilation, and JavaScript syntax. New tests cover missing import categories with mixed-case legacy transactions, per-IP throttling across distinct email addresses, and recovery after the throttle window. The mortgage lender links and maintenance releases were rechecked against official sources. The phone viewport and HTTPS reverse proxy were not exercised in this pass; earlier mobile reviews are documented above.
+
+Before restarting the live loopback server, a SQLite backup was saved under the ignored `instance/` directory. The updated server returned a no-store, CSP-protected bootstrap response and rejected unauthenticated account data with HTTP 401. After restart, SQLite integrity and foreign keys still passed, and all account-record counts matched the backup. The database and its backup remain outside Git.

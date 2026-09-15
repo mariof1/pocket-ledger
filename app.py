@@ -407,17 +407,21 @@ def login():
     data = payload()
     email = str(data.get("email", "")).strip().lower()
     password = data.get("password", "")
-    attempt_key = f"{request.remote_addr or 'unknown'}:{email[:254]}"
-    attempt = db().execute("SELECT count, first_at FROM login_attempts WHERE key = ?", (attempt_key,)).fetchone()
+    address = request.remote_addr or "unknown"
+    attempt_key = f"email:{address}:{email[:254]}"
+    address_key = f"ip:{address}"
     now = int(time.time())
-    if attempt and now - attempt["first_at"] < 15 * 60 and attempt["count"] >= 5:
+    db().execute("DELETE FROM login_attempts WHERE first_at <= ?", (now - 15 * 60,))
+    db().commit()
+    attempt = db().execute("SELECT count FROM login_attempts WHERE key = ?", (attempt_key,)).fetchone()
+    address_attempt = db().execute("SELECT count FROM login_attempts WHERE key = ?", (address_key,)).fetchone()
+    if (attempt and attempt["count"] >= 5) or (address_attempt and address_attempt["count"] >= 30):
         return fail("Too many sign-in attempts. Try again in 15 minutes.", 429)
     user = db().execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     if not user or not isinstance(password, str) or not check_password_hash(user["password_hash"], password):
-        if not attempt or now - attempt["first_at"] >= 15 * 60:
-            db().execute("INSERT INTO login_attempts(key, count, first_at) VALUES(?, 1, ?) ON CONFLICT(key) DO UPDATE SET count=1, first_at=excluded.first_at", (attempt_key, now))
-        else:
-            db().execute("UPDATE login_attempts SET count=count+1 WHERE key = ?", (attempt_key,))
+        for key in (attempt_key, address_key):
+            db().execute("""INSERT INTO login_attempts(key, count, first_at) VALUES(?, 1, ?)
+                ON CONFLICT(key) DO UPDATE SET count=count+1""", (key, now))
         db().commit()
         return fail("Email or password is incorrect.", 401)
     db().execute("DELETE FROM login_attempts WHERE key = ?", (attempt_key,))
@@ -532,10 +536,15 @@ def data():
             (profile["id"], f"{keys[0]}-01", upper, today)):
         if row["month"] in chart_totals:
             chart_totals[row["month"]][row["kind"]] = row["total"]
-    spending = [dict(row) for row in conn.execute("""SELECT category, SUM(amount_cents) AS amount_cents
-            FROM transactions WHERE profile_id = ? AND kind = 'expense'
-            AND occurred_on >= ? AND occurred_on < ? AND occurred_on <= ?
-            GROUP BY category ORDER BY amount_cents DESC""",
+    spending = [dict(row) for row in conn.execute("""SELECT
+            COALESCE(MAX(categories.name), MIN(transactions.category)) AS category,
+            SUM(transactions.amount_cents) AS amount_cents
+            FROM transactions LEFT JOIN categories ON categories.profile_id = transactions.profile_id
+            AND categories.name = transactions.category
+            WHERE transactions.profile_id = ? AND transactions.kind = 'expense'
+            AND transactions.occurred_on >= ? AND transactions.occurred_on < ?
+            AND transactions.occurred_on <= ?
+            GROUP BY transactions.category COLLATE NOCASE ORDER BY amount_cents DESC""",
             (profile["id"], lower, upper, today))]
     recent = [dict(row) for row in conn.execute("""SELECT id, kind, amount_cents, category,
             occurred_on, note FROM transactions WHERE profile_id = ? AND occurred_on >= ?

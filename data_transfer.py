@@ -243,6 +243,11 @@ def import_account(conn, user_id, document):
                 conn.execute("INSERT INTO categories(profile_id, name) VALUES(?, ?)",
                              (profile_id, text(item.get("name"), "Category name", 40).strip()))
                 counts["categories"] += 1
+            # Older exports may omit category suggestions while retaining records.
+            # Rebuild them now so they are available without restarting the server.
+            for table in ("transactions", "budgets", "bills"):
+                counts["categories"] += conn.execute(f"""INSERT OR IGNORE INTO categories(profile_id, name)
+                    SELECT profile_id, category FROM {table} WHERE profile_id = ?""", (profile_id,)).rowcount
             for row in records(profile.get("bill_imports"), "Bill imports"):
                 item = record(row, "Bill import")
                 bill_id = bill_ids.get(integer(item.get("bill_id"), "Bill import bill reference"))

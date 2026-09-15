@@ -167,6 +167,40 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/account/import", original).status_code, 400)
         self.assertFalse(self.client.get("/api/bootstrap").json["import_ready"])
 
+    def test_import_rebuilds_missing_categories_and_combines_legacy_case_variants(self):
+        self.register("legacy-categories-source@example.com")
+        today = date.today()
+        for amount in ("1", "2"):
+            self.assertEqual(self.request("POST", "/api/transactions", {
+                "kind": "expense", "amount": amount, "category": "Food",
+                "occurred_on": today.isoformat()
+            }).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/budgets", {
+            "month": today.strftime("%Y-%m"), "category": "Travel", "limit": "50"
+        }).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/bills", {
+            "name": "Heating", "category": "Housing", "amount": "30", "day_of_month": 1
+        }).status_code, 201)
+        export = self.client.get("/api/account/export").json
+        profile = export["profiles"][0]
+        profile["categories"] = []
+        profile["transactions"][1]["category"] = "food"
+
+        destination = app.test_client()
+        csrf = destination.get("/api/bootstrap").json["csrf"]
+        self.assertEqual(destination.post("/api/register", json={
+            "email": "legacy-categories-destination@example.com",
+            "password": "another strong password 123"
+        }, headers={"X-CSRF-Token": csrf}).status_code, 200)
+        csrf = destination.get("/api/bootstrap").json["csrf"]
+        imported = destination.post("/api/account/import", json=export,
+                                    headers={"X-CSRF-Token": csrf})
+        self.assertEqual(imported.status_code, 201, imported.json)
+        self.assertEqual(imported.json["counts"]["categories"], 3)
+        data = destination.get(f"/api/data?month={today:%Y-%m}").json
+        self.assertEqual(data["categories"], ["Food", "Housing", "Travel"])
+        self.assertEqual(data["spending"], [{"category": "Food", "amount_cents": 300}])
+
     def test_records_are_separate_by_profile_and_account(self):
         self.register("first@example.com")
         original = self.client.get("/api/bootstrap").json["profile_id"]
@@ -256,6 +290,33 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/login", {
             "email": "limit@example.com", "password": "a strong password 123"
         }).status_code, 429)
+
+    def test_sign_in_limit_cannot_be_evaded_by_changing_email(self):
+        self.register("ip-limit-owner@example.com")
+        self.assertEqual(self.request("POST", "/api/logout").status_code, 200)
+        self.csrf = self.client.get("/api/bootstrap").json["csrf"]
+        for index in range(30):
+            response = self.client.post("/api/login", json={
+                "email": f"unknown-{index}@example.com", "password": "wrong password"
+            }, headers={"X-CSRF-Token": self.csrf},
+                environ_overrides={"REMOTE_ADDR": "192.0.2.25"})
+            self.assertEqual(response.status_code, 401, index)
+        blocked = self.client.post("/api/login", json={
+            "email": "ip-limit-owner@example.com", "password": "a strong password 123"
+        }, headers={"X-CSRF-Token": self.csrf},
+            environ_overrides={"REMOTE_ADDR": "192.0.2.25"})
+        self.assertEqual(blocked.status_code, 429)
+        with app.app_context():
+            self.assertEqual(db().execute("SELECT count FROM login_attempts WHERE key = ?",
+                                          ("ip:192.0.2.25",)).fetchone()[0], 30)
+            db().execute("UPDATE login_attempts SET first_at = first_at - 901 WHERE key = ?",
+                         ("ip:192.0.2.25",))
+            db().commit()
+        accepted = self.client.post("/api/login", json={
+            "email": "ip-limit-owner@example.com", "password": "a strong password 123"
+        }, headers={"X-CSRF-Token": self.csrf},
+            environ_overrides={"REMOTE_ADDR": "192.0.2.25"})
+        self.assertEqual(accepted.status_code, 200)
 
     def test_sign_out_revokes_a_copied_session_cookie(self):
         self.register("revocation@example.com")
