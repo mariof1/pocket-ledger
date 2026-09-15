@@ -22,8 +22,52 @@ dialog{border:0;border-radius:17px;padding:0;width:min(95vw,470px);box-shadow:0 
 @media(max-width:600px){.monthly-plan{grid-template-columns:1fr}.monthly-plan p{grid-column:auto}.budget-plan>div{align-items:flex-start}.bill-total{gap:10px}.bill-total strong{text-align:right}}
 .commute-panel{margin-bottom:16px}.bills-panel{margin-top:16px}.commute-list{display:grid;gap:10px}.commute-card{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:16px;border:1px solid var(--line);border-radius:12px;padding:15px}.commute-card>div:first-child{display:grid;justify-items:start;gap:5px;min-width:0}.commute-card>div:first-child strong{font-size:14px}.commute-card small{font-size:11px;color:var(--muted);line-height:1.4}.commute-card-amount{text-align:right;display:grid;gap:3px}.commute-card-amount strong{font-size:18px;color:var(--green)}.commute-card-actions{display:flex;gap:5px}.commute-card .freshness-warning{grid-column:1/-1;margin:0}.dialog-content{max-height:90vh;overflow:auto}dialog:has(#dialog-form[data-type="commute"]){width:min(95vw,620px)}.commute-mode-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px}.commute-mode-fields label{display:grid;gap:8px;font-size:13px;font-weight:650}.form-grid textarea{width:100%;border:1px solid #dfe7df;border-radius:9px;padding:12px 14px;font:inherit;color:var(--ink);resize:vertical}.form-grid label small{font-size:11px;color:var(--muted);font-weight:400;line-height:1.4}.workday-fieldset{border:1px solid var(--line);border-radius:10px;padding:12px}.workday-fieldset legend{font-size:13px;font-weight:650;padding:0 6px}.workday-options{display:flex;flex-wrap:wrap;gap:6px}.workday-options label{position:relative;cursor:pointer}.workday-options input{position:absolute;opacity:0;width:1px;height:1px}.workday-options span{display:block;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted)}.workday-options input:checked+span{background:var(--green);border-color:var(--green);color:#fff}.workday-options input:focus-visible+span{outline:3px solid #9ccab0;outline-offset:2px}.commute-preview{background:var(--green-soft);border-radius:10px;padding:12px 14px;display:grid;gap:10px;font-size:12px;color:var(--green)}#commute-preview-result strong{font-size:17px}.commute-preview p{margin:7px 0 0;color:#85612d}
 @media(max-width:600px){.commute-card{grid-template-columns:1fr auto;gap:12px}.commute-card-actions{grid-column:1/-1}.commute-mode-fields{grid-template-columns:1fr}.heading-actions .btn{flex:1}.heading-actions .month-input{flex-basis:100%}}
+
 .bill-import-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid var(--line);margin-bottom:8px}.bill-import-bar>div{display:grid;gap:5px}.bill-import-bar strong{font-size:14px}.bill-import-bar small{color:var(--muted);font-size:11px;line-height:1.4}dialog:has(#bill-import-form){width:min(95vw,660px)}.bill-import-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0}.bill-import-toolbar>div{display:flex;gap:12px}.bill-import-list{display:grid;gap:8px;max-height:42vh;overflow:auto;padding:3px}.bill-import-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer}.bill-import-row:has(input:checked){border-color:var(--green);background:var(--green-soft)}.bill-import-row.unavailable{opacity:.64;cursor:default}.bill-import-row input{width:17px;height:17px;accent-color:var(--green)}.bill-import-row span{display:grid;gap:4px;min-width:0}.bill-import-row strong{font-size:13px;overflow-wrap:anywhere}.bill-import-row small,.bill-import-row em{font-size:11px;color:var(--muted);font-style:normal;line-height:1.4}.bill-import-row em.duplicate-note{color:#85612d}.bill-import-row b{font-size:13px;white-space:nowrap}.bill-schedule-list{display:grid;gap:8px;background:#fff8ec;border:1px solid #f2dcba;border-radius:10px;padding:13px;margin-top:14px}.bill-schedule-list>strong{font-size:12px;color:#85612d}.bill-schedule-item{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}.bill-schedule-item span{overflow-wrap:anywhere}.bill-import-count{font-size:12px;color:var(--green);font-weight:650}
 @media(max-width:600px){.bill-import-bar{align-items:stretch;flex-direction:column}.bill-import-bar .btn{width:100%}.bill-import-toolbar{align-items:flex-start;flex-direction:column}.bill-import-toolbar>div{width:100%;justify-content:space-between}.bill-import-row{padding:10px;gap:8px}.bill-import-row b{align-self:start}.bill-schedule-item{align-items:flex-start;flex-direction:column}}
 .transfer-form{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-top:22px}.transfer-form label{display:grid;gap:8px;font-size:12px;font-weight:650;min-width:min(100%,290px)}.transfer-form input[type=file]{border:1px solid var(--line);border-radius:9px;background:#fff;padding:10px;font-size:11px;max-width:100%}.transfer-form+.setting-note{margin-top:14px}
 @media(max-width:600px){.transfer-form{align-items:stretch}.transfer-form label,.transfer-form .btn{width:100%}}
 .goal-plan-warning{background:#fff8e8;border:1px solid #f0dab1;border-radius:9px;padding:10px 12px;color:#856329!important;font-size:11px!important;line-height:1.5;margin:14px 0 0!important}
+
+/* Readable type and consistent keyboard focus across records and forms. */
+:root{--muted:#5b6d63;--red:#a4433a}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #72ab89;outline-offset:2px}
+.metric-foot,.panel-heading p,.monthly-plan small,.monthly-plan p,.setting-note,.budget-plan p,.goal-card p,.goal-details,.mobile-record small,.commute-card small,.bill-import-bar small,.bill-import-row small,.bill-import-row em,.form-grid label small{font-size:13px;line-height:1.5}
+.monthly-plan p,.calc-result p{color:var(--muted)}
+.data-table th{color:var(--muted);font-size:11px}
+.data-table td .sub,.category-pill,.chart-col small,.lender-row small,.lender-reason,.side-label,.side-user small{font-size:12px;color:var(--muted)}
+.auth-footnote{color:var(--muted)}
+.table-action,.mini-link{font-size:12px;min-height:32px;padding:7px 9px}
+.table-action.delete{color:var(--red)}
+.lender-reason{line-height:1.5}
+.bill-record-money small{font-size:12px!important}
+.goal-plan-warning{font-size:13px!important}
+.legend,.breakdown-top,.goal-mini-item span,.insight,.bill-total span,.breadcrumb{font-size:12px}
+
+/* A schedule is separate from the monthly planning average and actual spending. */
+.bill-status-panel{margin:17px 0;padding:22px}
+.bill-status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}
+.bill-status-grid>div{background:#f7f9f6;border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;align-content:start;gap:6px}
+.bill-status-grid span{font-size:12px;color:var(--muted);font-weight:650}
+.bill-status-grid strong{font-size:23px;letter-spacing:-.04em;color:var(--ink);overflow-wrap:anywhere}
+.bill-status-grid small{font-size:12px;line-height:1.45;color:var(--muted)}
+.bill-status-grid .bill-status-pending{background:#fff8eb;border-color:#f0dfbd}
+.bill-status-next{list-style:none;margin:18px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.bill-status-next li{border:1px solid var(--line);border-radius:10px;padding:11px 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}
+.bill-status-next li span{display:grid;gap:4px;min-width:0}
+.bill-status-next strong{font-size:12px;overflow-wrap:anywhere}
+.bill-status-next small{font-size:12px;color:var(--muted)}
+.bill-status-next b{font-size:12px;white-space:nowrap}
+.bill-status-note,.bill-status-warning{font-size:12px;line-height:1.5;margin:15px 0 0;color:var(--muted)}
+.bill-status-warning{color:#85612d}
+.bill-status-panel .panel-heading{align-items:center}
+.bill-status-panel .mini-link:disabled{opacity:.5;cursor:not-allowed}
+
+/* Keep invalid form values in place and describe the error inside the form. */
+.form-error{background:#fff1ee;color:#9b3d35;border:1px solid #eabdb7;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;margin:0 0 16px}
+.form-error:focus{outline:3px solid #d88478;outline-offset:2px}
+.password-form .form-error{grid-column:1/-1}
+.transfer-form .form-error{flex-basis:100%}
+input[aria-invalid="true"],select[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:#ba5147!important;box-shadow:0 0 0 2px rgba(186,81,71,.12)}
+@media(max-width:850px){.bill-status-grid,.bill-status-next{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.bill-status-panel{padding:17px}.bill-status-grid,.bill-status-next{grid-template-columns:1fr}.bill-status-grid strong{font-size:21px}.bill-status-panel .panel-heading{align-items:flex-start;gap:8px}}

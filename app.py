@@ -16,6 +16,7 @@ from flask import Flask, g, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.security import check_password_hash, generate_password_hash
 from bill_import import due_dates as bill_due_dates
+from bill_status import month_bill_status
 from commute import REGIONS, estimate as commute_estimate, official_holidays, parse_dates, positive_hundredths
 from data_transfer import destination_profile, export_account, import_account
 
@@ -565,6 +566,14 @@ def data():
     for bill in bills:
         bill["monthly_cents"] = monthly_bill_cents(bill["amount_cents"], bill["frequency"])
     monthly_bills_cents = sum(bill["monthly_cents"] for bill in bills)
+    linked_bill_payments = [dict(row) for row in conn.execute("""SELECT
+        bill_imports.bill_id, bill_imports.due_on, transactions.amount_cents
+        FROM bill_imports JOIN bills ON bills.id = bill_imports.bill_id
+        JOIN transactions ON transactions.id = bill_imports.transaction_id
+        WHERE bills.profile_id = ? AND transactions.profile_id = ?
+        AND bill_imports.due_on >= ? AND bill_imports.due_on < ?""",
+        (profile["id"], profile["id"], lower, upper))]
+    bill_status = month_bill_status(bills, linked_bill_payments, month, today)
     commutes = [dict(row) for row in conn.execute(
         """SELECT id, name, mode, distance_hundredths, mpg_hundredths,
                   fuel_price_cents, fare_cents, weekdays, excluded_dates,
@@ -581,7 +590,8 @@ def data():
         "SELECT name FROM categories WHERE profile_id = ? ORDER BY name COLLATE NOCASE", (profile["id"],))]
     return jsonify(profile=dict(profile), month=month, monthly_totals=monthly_totals,
                    chart=list(chart_totals.values()), spending=spending, recent=recent,
-                   budgets=budgets, goals=goals, bills=bills, commutes=commutes,
+                   budgets=budgets, goals=goals, bills=bills, bill_status=bill_status,
+                   commutes=commutes,
                    monthly_commuting_cents=monthly_commuting_cents,
                    monthly_bills_cents=monthly_bills_cents, categories=categories)
 

@@ -74,6 +74,58 @@ function toast(message) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.add('hidden'), 3400);
 }
 function showError(error) { toast(error.message || String(error)); }
+function clearFormError(form) {
+  const summary = form.querySelector('.form-error');
+  if (summary) summary.classList.add('hidden');
+  form.querySelectorAll('[aria-invalid="true"]').forEach(field => {
+    field.removeAttribute('aria-invalid');
+    if ('errorPriorDescription' in field.dataset) {
+      if (field.dataset.errorPriorDescription) field.setAttribute('aria-describedby', field.dataset.errorPriorDescription);
+      else field.removeAttribute('aria-describedby');
+      delete field.dataset.errorPriorDescription;
+    }
+  });
+}
+function showFormError(form, error) {
+  if (!form) return showError(error);
+  const message = error.message || String(error);
+  let summary = form.querySelector('.form-error');
+  if (!summary) {
+    summary = document.createElement('div');
+    summary.id = `form-error-${form.id}`;
+    summary.className = 'form-error';
+    summary.setAttribute('role', 'alert');
+    summary.tabIndex = -1;
+    form.prepend(summary);
+  }
+  clearFormError(form);
+  summary.textContent = message;
+  summary.classList.remove('hidden');
+  const labels = [
+    [/^New passwords do not match/, 'confirm_password'], [/^Current password/, 'current_password'],
+    [/^New password/, 'new_password'], [/^Bill day/, 'day_of_month'],
+    [/^First payment date/, 'first_due_on'], [/^Target date/, 'target_date'],
+    [/^Monthly contribution/, 'monthly'], [/^Daily round-trip/, 'distance'],
+    [/^UK miles per gallon/, 'mpg'], [/^Fuel price/, 'fuel_price'],
+    [/^Daily return fare/, 'fare'], [/^Annual leave days/, 'annual_leave_days'],
+    [/^Dates off|^Excluded dates/, 'excluded_dates'],
+    [/^Bill name|^Goal name|^Commute name|^Profile name/, 'name'],
+    [/^Budget/, 'limit'], [/^Saved/, 'saved'], [/^Target/, 'target'],
+    [/^Amount/, 'amount'], [/^Date/, 'occurred_on'], [/^Month/, 'month'],
+    [/^Note/, 'note'], [/^Category/, 'category'],
+  ];
+  let name = labels.find(([pattern]) => pattern.test(message))?.[1];
+  if (name === 'category' && form.elements.namedItem('category')?.value === '__new__') name = 'new_category';
+  const field = /^Choose an exported JSON file|^The export file/.test(message)
+    ? form.querySelector('#account-import-file') : name && form.querySelector(`[name="${name}"]`);
+  if (field) {
+    const prior = field.getAttribute('aria-describedby') || '';
+    field.dataset.errorPriorDescription = prior;
+    field.setAttribute('aria-invalid', 'true');
+    field.setAttribute('aria-describedby', `${prior ? `${prior} ` : ''}${summary.id}`);
+  }
+  summary.focus();
+}
 function closeMenu(returnFocus = false) {
   $('#sidebar').classList.remove('open');
   $('#menu-scrim').classList.add('hidden');
@@ -128,6 +180,11 @@ function transactionRows(items, compact = false) {
 function mobileTransactionCards(items, compact = false) {
   return `<div class="mobile-record-list">${items.map(tx => `<article class="mobile-record"><div><strong>${escapeHtml(tx.note || tx.category)}</strong><span class="amount ${tx.kind === 'income' ? 'positive' : ''}">${tx.kind === 'income' ? '+' : '−'}${fmt(tx.amount_cents)}</span></div><small>${escapeHtml(tx.category)} · ${shortDate(tx.occurred_on)} · ${tx.kind === 'income' ? 'Income' : 'Expense'}</small>${compact ? '' : `<div class="mobile-record-actions"><button class="table-action" data-action="duplicate-transaction" data-id="${tx.id}">Duplicate</button><button class="table-action" data-action="edit-transaction" data-id="${tx.id}">Edit</button><button class="table-action delete" data-action="delete-transaction" data-id="${tx.id}">Delete</button></div>`}</article>`).join('')}</div>`;
 }
+function billStatusPanel() {
+  const status = state.data.bill_status;
+  const next = status.next_unrecorded.map(item => `<li><span><strong>${escapeHtml(item.name)}</strong><small>${shortDate(item.due_on)} · ${item.due_now ? 'Due or past due' : 'Upcoming'}</small></span><b>${fmt(item.amount_cents)}</b></li>`).join('');
+  return `<section class="panel bill-status-panel">${panelHead('Scheduled bill payments', monthLabel(state.month), `<button class="mini-link" data-action="import-bills" ${state.data.bills.length ? '' : 'disabled'}>Review payments →</button>`)}<div class="bill-status-grid"><div><span>Scheduled this month</span><strong>${fmt(status.scheduled_cents)}</strong><small>${status.scheduled_count} occurrence${status.scheduled_count === 1 ? '' : 's'} from saved bills</small></div><div><span>Linked to transactions</span><strong>${fmt(status.recorded_schedule_cents)}</strong><small>${status.recorded_count} linked · transaction amounts ${fmt(status.recorded_cents)}</small></div><div class="bill-status-pending"><span>Not linked to transactions</span><strong>${fmt(status.unrecorded_cents)}</strong><small>${fmt(status.due_now_cents)} due or past due · ${fmt(status.upcoming_cents)} upcoming</small></div></div>${next ? `<ul class="bill-status-next" aria-label="Next unrecorded bill payments">${next}</ul>` : ''}${status.unscheduled_bills ? `<p class="bill-status-warning">${status.unscheduled_bills} non-monthly bill${status.unscheduled_bills === 1 ? '' : 's'} need${status.unscheduled_bills === 1 ? 's' : ''} a first payment date before the app can list due payments.</p>` : ''}<p class="bill-status-note">Linked and unlinked scheduled values add up to this month’s total. Linked transaction amounts may differ after edits. Manual payments remain unlinked; review them before importing. The schedule reflects current bill settings.</p></section>`;
+}
 function dashboard() {
   const income = state.data.monthly_totals.income;
   const expenses = state.data.monthly_totals.expense;
@@ -141,11 +198,12 @@ function dashboard() {
   const categories = state.data.spending.slice(0, 5);
   const breakdown = categories.length ? `<div class="breakdown-list">${categories.map(({category, amount_cents: amount}, i) => `<div class="breakdown-row"><div class="breakdown-top"><strong>${escapeHtml(category)}</strong><span>${fmt(amount)}</span></div><div class="track ${i === 1 ? 'gold' : ''}"><span style="width:${expenses ? amount / expenses * 100 : 0}%"></span></div></div>`).join('')}</div>` : empty('▥', 'No spending yet', 'Add an expense to see where your money goes.');
   const goals = state.data.goals.slice(0, 3);
-  return heading('Good to see you.', `Here's your money at a glance for ${monthLabel(state.month)}.`, `${monthPicker()}<button class="btn btn-secondary" data-action="add-transaction">＋ Add new</button>`)
-    + `<div class="grid-4">${metric('Total income', fmt(income), 'Money coming in this month', '↙')}${metric('Total spending', fmt(expenses), 'Expenses recorded this month', '↗', 'gold')}${metric('Cash flow', fmt(net), net >= 0 ? 'Available after spending' : 'Spending exceeds income', '⌁', net < 0 ? 'red' : '')}${metric('Savings rate', `${rate}%`, income ? 'Cash flow ÷ income' : 'Add income to calculate', '◎')}</div>`
-    + `<section class="monthly-plan"><div><small>Bills & commuting · ${monthLabel(state.month)} plan</small><strong>${fmt(bills)}</strong></div><div><small>Savings goal contributions · monthly</small><strong>${fmt(goalsMonthly)}</strong></div><p>Bills use monthly averages; commuting uses calendar workdays and your leave estimate. Payments count in spending when you record a transaction.</p></section>`
+  return heading('Your month at a glance', `Recorded activity and scheduled bill payments for ${monthLabel(state.month)}.`, `${monthPicker()}<button class="btn btn-secondary" data-action="add-transaction">＋ Add new</button>`)
+    + `<div class="grid-4">${metric('Recorded income', fmt(income), 'Income transactions this month', '↙')}${metric('Recorded spending', fmt(expenses), 'Expense transactions this month', '↗', 'gold')}${metric('Recorded cash flow', fmt(net), 'Income less recorded spending, not an account balance', '⌁', net < 0 ? 'red' : '')}${metric('Savings rate', `${rate}%`, income ? 'Recorded cash flow ÷ income' : 'Add income to calculate', '◎')}</div>`
+    + `<section class="monthly-plan"><div><small>Bills & commuting · monthly planning average</small><strong>${fmt(bills)}</strong></div><div><small>Savings goal contributions · monthly plan</small><strong>${fmt(goalsMonthly)}</strong></div><p>These are planning figures, not extra recorded spending. Bill averages spread recurring costs over the year; commuting uses this month’s workday estimate.</p></section>`
+    + billStatusPanel()
     + `<div class="dashboard-grid"><section class="panel">${panelHead('Income & spending', 'The last six months')}${chart}</section><section class="panel">${panelHead('Spending breakdown', monthLabel(state.month))}${breakdown}</section></div>`
-    + `<div class="dashboard-bottom"><section class="panel">${panelHead('Recent transactions', 'Latest activity this month', `<button class="mini-link" data-page="transactions">View all →</button>`)}${state.data.recent.length ? `<div class="table-wrap recent-table"><table class="data-table"><thead><tr><th>Transaction</th><th>Category</th><th>Date</th><th style="text-align:right">Amount</th></tr></thead><tbody>${transactionRows(state.data.recent, true)}</tbody></table></div>${mobileTransactionCards(state.data.recent, true)}` : empty('⇄', 'No transactions this month', 'Start with an income or expense.')}</section><section class="panel">${panelHead('Savings goals', 'Make progress on what matters', `<button class="mini-link" data-page="goals">View goals →</button>`)}${goals.length ? `<div class="goal-mini">${goals.map(goal => `<div class="goal-mini-item"><div><strong>${escapeHtml(goal.name)}</strong><span>${Math.min(100, Math.round(goal.saved_cents / goal.target_cents * 100))}%</span></div><div class="track"><span style="width:${Math.min(100, goal.saved_cents / goal.target_cents * 100)}%"></span></div><span>${fmt(goal.saved_cents)} of ${fmt(goal.target_cents)}</span></div>`).join('')}</div>` : empty('◎', 'No savings goals yet', 'Create a goal to track your progress.')}<div class="insight-list"><div class="insight"><span>Bills & commuting · ${monthLabel(state.month)} plan</span><strong>${fmt(bills)}</strong></div><div class="insight"><span>Recorded income less planned bills & goals</span><strong>${fmt(income - bills - goalsMonthly)}</strong></div></div></section></div>`;
+    + `<div class="dashboard-bottom"><section class="panel">${panelHead('Recent transactions', 'Latest activity this month', `<button class="mini-link" data-page="transactions">View all →</button>`)}${state.data.recent.length ? `<div class="table-wrap recent-table"><table class="data-table"><thead><tr><th>Transaction</th><th>Category</th><th>Date</th><th style="text-align:right">Amount</th></tr></thead><tbody>${transactionRows(state.data.recent, true)}</tbody></table></div>${mobileTransactionCards(state.data.recent, true)}` : empty('⇄', 'No transactions this month', 'Start with an income or expense.')}</section><section class="panel">${panelHead('Savings goals', 'Make progress on what matters', `<button class="mini-link" data-page="goals">View goals →</button>`)}${goals.length ? `<div class="goal-mini">${goals.map(goal => `<div class="goal-mini-item"><div><strong>${escapeHtml(goal.name)}</strong><span>${Math.min(100, Math.round(goal.saved_cents / goal.target_cents * 100))}%</span></div><div class="track"><span style="width:${Math.min(100, goal.saved_cents / goal.target_cents * 100)}%"></span></div><span>${fmt(goal.saved_cents)} of ${fmt(goal.target_cents)}</span></div>`).join('')}</div>` : empty('◎', 'No savings goals yet', 'Create a goal to track your progress.')}</section></div>`;
 }
 function transactionsPage() {
   const listing = state.transactions || { transactions: [], total: 0, offset: 0, limit: 50 };
@@ -192,7 +250,8 @@ function billsPage() {
   const cards = bills.map(bill => `<article class="mobile-record"><div><strong>${escapeHtml(bill.name)}</strong><span class="bill-record-money"><span class="amount">${fmt(bill.monthly_cents)}</span><small>monthly average</small></span></div><small>${escapeHtml(bill.category)} · ${fmt(bill.amount_cents)} each time · ${escapeHtml(billFrequencyLabel(bill.frequency))}${bill.frequency === 'monthly' ? ` · Day ${bill.day_of_month}` : bill.first_due_on ? ` · From ${shortDate(bill.first_due_on)}` : ''}</small><div class="mobile-record-actions"><button class="table-action" data-action="edit-bill" data-id="${bill.id}">Edit</button><button class="table-action delete" data-action="delete-bill" data-id="${bill.id}">Delete</button></div></article>`);
   const commuteCards = commutes.map(plan => `<article class="commute-card"><div><span class="category-pill">${plan.mode === 'car' ? 'Car' : 'Public transport'}</span><strong>${escapeHtml(plan.name)}</strong><small>${commuteDayText(plan)} · ${fmt(plan.daily_cents)} per day${commuteAdjustmentText(plan)}</small></div><div class="commute-card-amount"><strong>${fmt(plan.monthly_cents)}</strong><small>in ${monthLabel(state.month)}</small></div><div class="commute-card-actions"><button class="table-action" data-action="edit-commute" data-id="${plan.id}">Edit</button><button class="table-action delete" data-action="delete-commute" data-id="${plan.id}">Delete</button></div>${plan.holiday_status || plan.leave_status ? `<p class="freshness-warning">${escapeHtml([plan.holiday_status, plan.leave_status].filter(Boolean).join(' '))}</p>` : ''}</article>`).join('');
   return heading('Regular bills', `Plan bills and commuting for ${monthLabel(state.month)}.`, `${monthPicker()}<button class="btn btn-secondary" data-action="add-commute">＋ Commuting</button><button class="btn btn-primary" data-action="add-bill">＋ Add bill</button>`)
-    + `<div class="bill-total"><span>Bills & commuting · ${monthLabel(state.month)} plan</span><strong>${fmt(state.data.monthly_bills_cents)}</strong></div>`
+    + `<div class="bill-total"><span>Bills & commuting · monthly planning average</span><strong>${fmt(state.data.monthly_bills_cents)}</strong></div>`
+    + billStatusPanel()
     + `<section class="panel commute-panel">${panelHead('Commuting', 'Car fuel or public transport, based on the workdays you choose', `<button class="mini-link" data-action="add-commute">Add commute →</button>`)}${commutes.length ? `<div class="commute-list">${commuteCards}</div>` : empty('↗', 'No commute planned yet', 'Add a car or public transport commute to estimate this month’s travel cost.')}</section>`
     + `<section class="panel wide-panel bills-panel"><div class="bill-import-bar"><div><strong>Bill payments</strong><small>Review what's due and record only bills you've paid.</small></div><button class="btn btn-secondary" data-action="import-bills" ${bills.length ? '' : 'disabled'}>Import into transactions</button></div>${bills.length ? `<div class="table-wrap desktop-record-table"><table class="data-table"><thead><tr><th>Bill</th><th>Category</th><th>Frequency</th><th style="text-align:right">Each time</th><th style="text-align:right">Monthly average</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div><div class="mobile-record-list">${cards.join('')}</div>` : empty('▦', 'No bills saved', 'Add rent, utilities, subscriptions or other regular costs.')}</section><p class="setting-note">Bill averages spread annual costs over 12 months and use 52 weeks per year. Commuting counts this month's selected weekdays and optional UK bank holidays. Annual leave entered as a yearly number is an approximate monthly share; exact dates give precise months. Import paid bills at their actual amount and due date; commuting estimates stay as plans. Payments recorded as transactions appear in actual spending.</p>`;
 }
@@ -311,14 +370,14 @@ function settingsPage() {
   const transfer = `<section class="panel settings-panel">${panelHead('Move your account data', 'Export every profile and import it into another new account')}
     <p class="setting-note">The JSON file includes transactions, saved categories, budgets, savings goals, bills, commuting plans and links to imported bill payments. It excludes passwords, sign-in sessions and your account email. Keep the file private.</p>
     <button type="button" class="btn btn-secondary" data-action="export-data">Export all data</button>
-    <form id="account-import-form" class="transfer-form">
+    <form id="account-import-form" class="transfer-form" novalidate>
       <label>Import into this account<input id="account-import-file" type="file" accept=".json,application/json" required ${canImport ? '' : 'disabled'}></label>
       <button type="submit" class="btn btn-outline" ${canImport ? '' : 'disabled'}>Import data</button>
     </form>
     <p class="setting-note">${canImport ? 'This new account is ready for an import.' : 'Import requires a new account with one empty profile. Existing account data is never replaced.'} Files up to 50 MB are accepted.</p>
   </section>`;
   return heading('Profiles & settings', 'Give different plans their own space.', `<button class="btn btn-primary" data-action="add-profile">＋ New profile</button>`)
-    + `<section class="panel settings-panel">${panelHead('Your profiles', 'Each profile has separate transactions, budgets, goals, bills and commutes')}<div class="profile-list">${profiles.map(profile => `<div class="profile-item"><span class="workspace-avatar">${escapeHtml(profile.name.charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(profile.name)}</strong><small>${escapeHtml(profile.currency)} · ${profile.id === state.data.profile.id ? 'Active profile' : 'Separate workspace'}</small></div>${profile.id !== state.data.profile.id ? `<button class="btn btn-secondary" data-action="select-profile" data-id="${profile.id}">Switch</button>` : `<span class="category-pill">Current</span>`}${profiles.length > 1 ? `<button class="table-action delete" data-action="delete-profile" data-id="${profile.id}">Delete</button>` : ''}</div>`).join('')}</div></section><section class="panel settings-panel">${panelHead('Account password', 'Change your password and sign out other sessions')}<form id="password-form" class="password-form"><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><label>Confirm new password<input name="confirm_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><button class="btn btn-primary" type="submit">Change password</button></form><p class="setting-note">Forgot your password? The server owner can run <code>python reset_password.py --email your@email.com</code> on this computer. The new password is entered privately in the console.</p></section>${transfer}<section class="panel settings-panel">${panelHead('Private local storage')}<p class="setting-note">Your account data is stored in <code>instance/ledger.sqlite3</code> on this server. Keep a backup of the <code>instance</code> directory if you move the app to another computer.</p><p class="setting-note">Current account: <strong>${escapeHtml(state.bootstrap.user.email)}</strong></p></section>`;
+    + `<section class="panel settings-panel">${panelHead('Your profiles', 'Each profile has separate transactions, budgets, goals, bills and commutes')}<div class="profile-list">${profiles.map(profile => `<div class="profile-item"><span class="workspace-avatar">${escapeHtml(profile.name.charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(profile.name)}</strong><small>${escapeHtml(profile.currency)} · ${profile.id === state.data.profile.id ? 'Active profile' : 'Separate workspace'}</small></div>${profile.id !== state.data.profile.id ? `<button class="btn btn-secondary" data-action="select-profile" data-id="${profile.id}">Switch</button>` : `<span class="category-pill">Current</span>`}${profiles.length > 1 ? `<button class="table-action delete" data-action="delete-profile" data-id="${profile.id}">Delete</button>` : ''}</div>`).join('')}</div></section><section class="panel settings-panel">${panelHead('Account password', 'Change your password and sign out other sessions')}<form id="password-form" class="password-form" novalidate><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><label>Confirm new password<input name="confirm_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><button class="btn btn-primary" type="submit">Change password</button></form><p class="setting-note">Forgot your password? The server owner can run <code>python reset_password.py --email your@email.com</code> on this computer. The new password is entered privately in the console.</p></section>${transfer}<section class="panel settings-panel">${panelHead('Private local storage')}<p class="setting-note">Your account data is stored in <code>instance/ledger.sqlite3</code> on this server. Keep a backup of the <code>instance</code> directory if you move the app to another computer.</p><p class="setting-note">Current account: <strong>${escapeHtml(state.bootstrap.user.email)}</strong></p></section>`;
 }
 function goalDeadlineMessage(goal, remaining, today = localDate()) {
   if (!goal.target_date || !remaining) return '';
@@ -437,7 +496,7 @@ function modal(type, item = null, duplicate = false) {
     fields = `${field('Profile name', 'name', 'text', '', 'maxlength="40" placeholder="e.g. Household or Holiday"')}${selectField('Currency', 'currency', ['GBP','EUR','USD'], 'GBP')}`;
   }
   $('#dialog-eyebrow').textContent = eyebrow; $('#dialog-title').textContent = title;
-  $('#dialog-body').innerHTML = `<form id="dialog-form" data-type="${type}" data-id="${duplicate ? '' : item?.id || ''}"><div class="form-grid">${fields}</div><div class="form-actions"><button type="button" class="btn btn-outline" id="dialog-cancel">Cancel</button><button type="submit" class="btn btn-primary">${duplicate ? 'Save duplicate' : item ? 'Save changes' : 'Save'}</button></div></form>`;
+  $('#dialog-body').innerHTML = `<form id="dialog-form" novalidate data-type="${type}" data-id="${duplicate ? '' : item?.id || ''}"><div class="form-grid">${fields}</div><div class="form-actions"><button type="button" class="btn btn-outline" id="dialog-cancel">Cancel</button><button type="submit" class="btn btn-primary">${duplicate ? 'Save duplicate' : item ? 'Save changes' : 'Save'}</button></div></form>`;
   $('#form-dialog').showModal();
   $('.dialog-content').scrollTop = 0;
   $('#dialog-close').focus();
@@ -473,7 +532,7 @@ async function saveBillImport(form) {
     const item = state.billImportPreview.items[Number(input.dataset.index)];
     return { bill_id: item.bill_id, due_on: item.due_on };
   });
-  if (!selected.length) return showError(new Error('Select at least one paid bill.'));
+  if (!selected.length) return showFormError(form, new Error('Select at least one paid bill.'));
   const result = await api('/api/bills/import', { method: 'POST', body: JSON.stringify({ month: state.month, items: selected }) });
   $('#form-dialog').close();
   await loadData();
@@ -550,7 +609,10 @@ document.addEventListener('click', async event => {
     if (button.id === 'menu-toggle') return toggleMenu();
     if (button.id === 'menu-scrim') return closeMenu(true);
     if (button.id === 'dialog-close' || button.id === 'dialog-cancel') return $('#form-dialog').close();
-    if (button.id === 'commute-preview-button') return await previewCommute();
+    if (button.id === 'commute-preview-button') {
+      try { return await previewCommute(); }
+      catch (error) { return showFormError($('#dialog-form'), error); }
+    }
     if (button.id === 'quick-add') return modal('transaction');
     if (button.id === 'profile-shortcut') return await navigate('settings');
     if (button.id === 'logout') { await api('/api/logout', { method: 'POST' }); state.data = null; return boot(); }
@@ -581,25 +643,28 @@ document.addEventListener('submit', async event => {
     catch (error) { $('#auth-error').textContent = error.message; $('#auth-error').classList.remove('hidden'); }
   } else if (event.target.id === 'dialog-form') {
     event.preventDefault();
+    clearFormError(event.target);
     const submit = event.target.querySelector('[type="submit"]'); submit.disabled = true;
-    try { await saveForm(event.target); } catch (error) { showError(error); } finally { submit.disabled = false; }
+    try { await saveForm(event.target); } catch (error) { showFormError(event.target, error); } finally { submit.disabled = false; }
   } else if (event.target.id === 'bill-import-form') {
     event.preventDefault();
     const submit = $('#bill-import-submit'); submit.disabled = true;
-    try { await saveBillImport(event.target); } catch (error) { showError(error); } finally { submit.disabled = false; }
+    try { await saveBillImport(event.target); } catch (error) { showFormError(event.target, error); } finally { submit.disabled = false; }
   } else if (event.target.id === 'account-import-form') {
     event.preventDefault();
+    clearFormError(event.target);
     const submit = event.target.querySelector('[type="submit"]'); submit.disabled = true;
-    try { await uploadAccount(event.target); } catch (error) { showError(error); } finally { submit.disabled = false; }
+    try { await uploadAccount(event.target); } catch (error) { showFormError(event.target, error); } finally { submit.disabled = false; }
   } else if (event.target.id === 'password-form') {
     event.preventDefault();
+    clearFormError(event.target);
     const data = Object.fromEntries(new FormData(event.target));
-    if (data.new_password !== data.confirm_password) return showError(new Error('New passwords do not match.'));
+    if (data.new_password !== data.confirm_password) return showFormError(event.target, new Error('New passwords do not match.'));
     const submit = event.target.querySelector('[type="submit"]'); submit.disabled = true;
     try {
       await api('/api/password', { method: 'POST', body: JSON.stringify({ current_password: data.current_password, new_password: data.new_password }) });
       await boot(); toast('Password changed. Other sessions were signed out.');
-    } catch (error) { showError(error); } finally { submit.disabled = false; }
+    } catch (error) { showFormError(event.target, error); } finally { submit.disabled = false; }
   }
 });
 document.addEventListener('change', async event => {

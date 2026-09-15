@@ -16,6 +16,7 @@ TEST_DIR = tempfile.TemporaryDirectory()
 os.environ["LEDGER_INSTANCE"] = TEST_DIR.name
 from app import app, db, reset_account_password  # noqa: E402
 from bill_import import due_dates  # noqa: E402
+from bill_status import month_bill_status  # noqa: E402
 import commute as commute_module  # noqa: E402
 
 
@@ -505,6 +506,58 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(due_dates(bill, "2026-03"), [])
         bill.update(frequency="quarterly", first_due_on="2026-01-31")
         self.assertEqual(due_dates(bill, "2026-04"), ["2026-04-30"])
+
+    def test_bill_status_keeps_scheduled_recorded_and_unrecorded_amounts_separate(self):
+        bills = [
+            {"id": 1, "name": "Rent", "frequency": "monthly", "day_of_month": 10,
+             "first_due_on": None, "amount_cents": 75000},
+            {"id": 2, "name": "Lessons", "frequency": "weekly", "day_of_month": 1,
+             "first_due_on": "2026-09-01", "amount_cents": 1200},
+            {"id": 3, "name": "Insurance", "frequency": "yearly", "day_of_month": 1,
+             "first_due_on": None, "amount_cents": 12000},
+        ]
+        linked = [{"bill_id": 1, "due_on": "2026-09-10", "amount_cents": 74000},
+                  {"bill_id": 2, "due_on": "2026-09-08", "amount_cents": 1200}]
+        status = month_bill_status(bills, linked, "2026-09", "2026-09-15")
+        self.assertEqual(status["scheduled_cents"], 81000)
+        self.assertEqual(status["recorded_schedule_cents"], 76200)
+        self.assertEqual(status["recorded_cents"], 75200)
+        self.assertEqual(status["unrecorded_cents"], 4800)
+        self.assertEqual(status["recorded_schedule_cents"] + status["unrecorded_cents"],
+                         status["scheduled_cents"])
+        self.assertEqual((status["due_now_cents"], status["upcoming_cents"]), (2400, 2400))
+        self.assertEqual((status["recorded_count"], status["unrecorded_count"],
+                          status["unscheduled_bills"]), (2, 4, 1))
+        self.assertEqual([item["due_on"] for item in status["next_unrecorded"]],
+                         ["2026-09-01", "2026-09-15", "2026-09-22"])
+
+    def test_bill_status_is_profile_scoped_and_manual_expenses_do_not_mark_bills_recorded(self):
+        self.register("bill-status@example.com")
+        today = date.today()
+        month = today.strftime("%Y-%m")
+        due_on = today.isoformat()
+        bill = self.request("POST", "/api/bills", {
+            "name": "Rent", "category": "Housing", "amount": "750",
+            "day_of_month": today.day
+        }).json["id"]
+        self.assertEqual(self.request("POST", "/api/transactions", {
+            "kind": "expense", "amount": "750", "category": "Housing",
+            "occurred_on": due_on, "note": "Manual rent"
+        }).status_code, 201)
+        before = self.client.get(f"/api/data?month={month}").json["bill_status"]
+        self.assertEqual((before["scheduled_cents"], before["recorded_cents"],
+                          before["unrecorded_cents"]), (75000, 0, 75000))
+        self.assertEqual(self.request("POST", "/api/bills/import", {
+            "month": month, "items": [{"bill_id": bill, "due_on": due_on}]
+        }).status_code, 201)
+        after = self.client.get(f"/api/data?month={month}").json["bill_status"]
+        self.assertEqual((after["recorded_cents"], after["unrecorded_cents"]), (75000, 0))
+        self.assertEqual(self.request("POST", "/api/profiles", {
+            "name": "Other", "currency": "GBP"
+        }).status_code, 201)
+        other = self.client.get(f"/api/data?month={month}").json["bill_status"]
+        self.assertEqual((other["scheduled_cents"], other["recorded_cents"],
+                          other["unrecorded_cents"]), (0, 0, 0))
 
     def test_bill_import_preview_and_idempotent_actual_expenses(self):
         self.register("bill-import@example.com")
