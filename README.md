@@ -45,6 +45,8 @@ volumes:
 
 Open a terminal in that folder and run `docker compose up -d`. Then open [http://127.0.0.1:5000](http://127.0.0.1:5000). The `ledger-data` volume keeps your records when the container stops or is replaced. The `127.0.0.1` address limits access to the computer running Docker. To check or stop the app, run `docker compose ps` or `docker compose stop` in the same folder.
 
+In Portainer, paste the YAML into a **Stack**. Keep `user: "10001:10001"`, or remove the `user` line to use the image's built-in account. An unprivileged user such as `1000:1000` cannot read the app files. For a remote host using port 5005 and an existing Docker network, see the [Portainer example](DEPLOYMENT.md#portainer-stack).
+
 ## Use Docker without Compose
 
 If you already use Docker and just want to start the image, copy these commands into a terminal:

@@ -25,6 +25,43 @@ docker compose ps
 
 The local build is labelled `dev`. The running app reports its image version in Profiles & settings and the `X-Pocket-Ledger-Version` response header. Stop any existing process using host port 5000 before starting either Compose example.
 
+## Portainer stack
+
+Paste this into a Portainer **Stack** and deploy it. It uses host port 5005 and joins an existing network named `prodNetwork`; change or remove the network section if your setup differs. Keep the same stack name and `data` volume when redeploying so existing records remain available.
+
+```yaml
+services:
+  ledger:
+    image: ghcr.io/mariof1/pocket-ledger:0.1.0
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    ports:
+      - "5005:5000"
+    volumes:
+      - data:/data
+    networks:
+      - prodNetwork
+
+volumes:
+  data:
+
+networks:
+  prodNetwork:
+    external: true
+```
+
+The image runs as UID/GID 10001 and protects `/app` so other users cannot read its code. Do not override it with `user: "1000:1000"`: the server will fail to import `app`. An existing custom `/data` mount must also be writable by UID 10001. If Portainer shows `permission denied` for `/data` after changing the user, check the mount's ownership; keep the volume and its database and signing key while fixing permissions.
+
+Port 5005 is reachable through the host's network interfaces. Use an HTTPS reverse proxy before accessing financial records from another device. If the proxy connects over `prodNetwork`, you can remove the `ports` section; the proxy can reach the container on port 5000. Set `LEDGER_HTTPS=1` in the stack environment when requests reach the app over HTTPS, so session cookies are marked Secure.
+
 ## Upgrade and back up
 
 Before changing image tags, make a verified online database backup inside the volume:
