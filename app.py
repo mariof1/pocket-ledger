@@ -31,6 +31,7 @@ from planning_routes import register_routes as register_planning_routes
 
 
 BASE = Path(__file__).resolve().parent
+APP_VERSION = os.environ.get("LEDGER_VERSION", (BASE / "VERSION").read_text(encoding="utf-8").strip())
 INSTANCE = Path(os.environ.get("LEDGER_INSTANCE", BASE / "instance"))
 INSTANCE.mkdir(parents=True, exist_ok=True)
 DATABASE = INSTANCE / "ledger.sqlite3"
@@ -333,6 +334,7 @@ def protect_api():
 
 @app.after_request
 def headers(response):
+    response.headers["X-Pocket-Ledger-Version"] = APP_VERSION
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Frame-Options"] = "DENY"

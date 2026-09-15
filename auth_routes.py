@@ -24,6 +24,7 @@ def register_routes(app, core):
     check_password_hash = core["check_password_hash"]
     hashlib = core["hashlib"]
     clean_text = core["clean_text"]
+    APP_VERSION = core["APP_VERSION"]
 
     @app.get("/api/bootstrap")
     def bootstrap():
@@ -31,7 +32,7 @@ def register_routes(app, core):
             session["csrf"] = secrets.token_urlsafe(32)
         user = current_user()
         if not user:
-            return jsonify(csrf=session["csrf"], user=None)
+            return jsonify(csrf=session["csrf"], user=None, version=APP_VERSION)
         profiles = [dict(row) for row in db().execute(
             "SELECT id, name, currency FROM profiles WHERE user_id = ? ORDER BY id", (user["id"],)
         )]
@@ -41,7 +42,7 @@ def register_routes(app, core):
             import_ready = True
         except ValueError:
             import_ready = False
-        return jsonify(csrf=session["csrf"], user=dict(user), profiles=profiles,
+        return jsonify(csrf=session["csrf"], user=dict(user), profiles=profiles, version=APP_VERSION,
                        profile_id=profile["id"] if profile else None,
                        import_ready=import_ready)
 

@@ -1,5 +1,9 @@
 # Pocket Ledger
 
+[![Validation and release pipeline](https://github.com/mariof1/pocket-ledger/actions/workflows/pipeline.yml/badge.svg?branch=main)](https://github.com/mariof1/pocket-ledger/actions/workflows/pipeline.yml)
+
+Source version: `0.1.0`. See [deployment and release instructions](DEPLOYMENT.md), the [security policy](SECURITY.md), and [contribution guide](CONTRIBUTING.md).
+
 A private web app for tracking income, spending, current/savings/card accounts, transfers, monthly category budgets, regular bills and savings goals. Each user can create up to ten separate profiles, each with its own records and currency (GBP, EUR or USD). Categories are saved per profile and can be picked again in bills, transactions and budgets. The overview shows monthly cash flow, savings rate, spending categories and a six-month income/spending chart. The Transactions page searches, filters by account and pages through history in groups of 50. The calculators estimate mortgage repayments, mortgage affordability, savings growth and the cost of a repeating spending habit.
 
 Open **Accounts** to add an account and set its opening balance to the amount before the first transaction you recorded for it. A card can start with a negative balance to represent an amount owed. Each profile starts with a zero-opening-balance Current account; after an upgrade, existing profile transactions are assigned to that account without changing the transactions. You can adjust its opening balance later to reflect money already held when tracking began. Balances are calculated through today from the opening balance, recorded income/expense transactions and transfers; they are app-ledger figures and are not synced with a bank. Transactions, reviewed bill payments and CSV statement imports ask which account receives the activity. A transfer moves a positive amount between two accounts in the same profile and changes both balances without adding to income, spending, budgets or cash flow. Savings goals remain a separate planning tracker; transferring into a savings account does not automatically update a goal.
@@ -27,6 +31,8 @@ In a commuting plan, choose **Annual leave allowance — monthly estimate** and 
 The UK mortgage affordability view compares the loan against selected published income-multiple limits from Nationwide, HSBC and Santander, checked on 15 September 2026. Select a property type for Santander's over-90% LTV screen, because the published house and flat limits differ. After 45 days without a criteria review, the calculator stops claiming a loan fits a sampled published cap and asks the user to open the current lender links. It also compares the estimated monthly repayment with the take-home pay and costs you enter and shows a scenario with an interest rate two percentage points higher. The scenario is a personal planning check; it does not reproduce a lender's private affordability model. Published income multiples are ceilings, and a lender's Agreement or Decision in Principle is needed for a personalised borrowing estimate. Calculator inputs stay in the browser and are not saved to SQLite.
 
 ## Run locally
+
+For a Docker deployment, use [DEPLOYMENT.md](DEPLOYMENT.md). The published release image is `ghcr.io/mariof1/pocket-ledger:0.1.0`; the supplied Compose file keeps its host port on loopback and stores data in a named volume.
 
 ```powershell
 python -m venv .venv
@@ -63,7 +69,7 @@ Change your password in Profiles & settings; this signs out other sessions. If y
 
 The command prompts for the new password without putting it in command history and signs out all existing sessions for that account.
 
-For access from another device, keep Pocket Ledger bound to loopback and configure an HTTPS reverse proxy on the same server that forwards to `127.0.0.1:5000`. Set `LEDGER_HTTPS=1` when the browser connects to the proxy over HTTPS so cookies use the Secure flag. The app refuses a non-loopback `LEDGER_HOST` value. Review the linked official lender criteria before updating `static/mortgage-guide.js` caps and its checked date; the embedded caps are a dated planning snapshot.
+For access from another device, keep the host port bound to loopback and configure an HTTPS reverse proxy on the same server that forwards to `127.0.0.1:5000`. Set `LEDGER_HTTPS=1` when the browser connects to the proxy over HTTPS so cookies use the Secure flag. Direct Python runs refuse a non-loopback `LEDGER_HOST` value; the Docker container listens internally while Compose restricts its published host port. Review the linked official lender criteria before updating `static/mortgage-guide.js` caps and its checked date; the embedded caps are a dated planning snapshot.
 
 ## Verify
 

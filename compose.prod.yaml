@@ -1,0 +1,22 @@
+services:
+  ledger:
+    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:?Set LEDGER_IMAGE_TAG to a published release version}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      LEDGER_HTTPS: ${LEDGER_HTTPS:-0}
+    volumes:
+      - ledger-data:/data
+
+volumes:
+  ledger-data:
