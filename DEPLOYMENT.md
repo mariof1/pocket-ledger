@@ -4,17 +4,17 @@ Pocket Ledger stores credentials and financial records in SQLite. Keep its data 
 
 ## Run the released image
 
-On a Linux host with Docker Compose, choose a published semantic-version image and start it:
+On a host with Docker Compose, the file uses the `0.1.0` release by default. Start it with:
 
-```sh
-export LEDGER_IMAGE_TAG=0.1.0
+```text
 docker compose -f compose.prod.yaml pull
 docker compose -f compose.prod.yaml up -d
 docker compose -f compose.prod.yaml ps
-curl -fsS http://127.0.0.1:5000/api/bootstrap
 ```
 
-The `ledger-data` named volume stores `ledger.sqlite3` and `secret.key`. The signing key is created with owner-only file permissions; protect the volume because the database and key are stored unencrypted. `docker compose down` keeps the volume; do not use `down -v` on a deployment you want to retain. The image runs as UID/GID 10001, drops Linux capabilities, uses a read-only root filesystem and a small temporary filesystem, and exposes a health check. A custom bind mount for `/data` must be writable by UID 10001.
+Open `http://127.0.0.1:5000/api/bootstrap` on the Docker host to verify that the app responds.
+
+To use another published version, set `LEDGER_IMAGE_TAG` in your shell or an `.env` file beside `compose.prod.yaml`, such as `LEDGER_IMAGE_TAG=0.2.0`. The `ledger-data` named volume stores `ledger.sqlite3` and `secret.key`. The signing key is created with owner-only file permissions; protect the volume because the database and key are stored unencrypted. `docker compose down` keeps the volume; do not use `down -v` on a deployment you want to retain. The image runs as UID/GID 10001, drops Linux capabilities, uses a read-only root filesystem and a small temporary filesystem, and exposes a health check. A custom bind mount for `/data` must be writable by UID 10001.
 
 To build locally instead of pulling GHCR:
 

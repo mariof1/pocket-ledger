@@ -1,6 +1,6 @@
 services:
   ledger:
-    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:?Set LEDGER_IMAGE_TAG to a published release version}
+    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:-0.1.0}
     init: true
     restart: unless-stopped
     read_only: true

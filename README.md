@@ -1,84 +1,36 @@
 # Pocket Ledger
 
-[![Validation and release pipeline](https://github.com/mariof1/pocket-ledger/actions/workflows/pipeline.yml/badge.svg?branch=main)](https://github.com/mariof1/pocket-ledger/actions/workflows/pipeline.yml)
+Pocket Ledger is a private spending and savings app you can run on your own computer. Track transactions, regular bills, budgets, accounts, savings goals and commuting costs. It also includes mortgage and savings calculators. Your records stay in the Docker data volume on the computer where you run it.
 
-Source version: `0.1.0`. See [deployment and release instructions](DEPLOYMENT.md), the [security policy](SECURITY.md), and [contribution guide](CONTRIBUTING.md).
+## Start with Docker Compose
 
-A private web app for tracking income, spending, current/savings/card accounts, transfers, monthly category budgets, regular bills and savings goals. Each user can create up to ten separate profiles, each with its own records and currency (GBP, EUR or USD). Categories are saved per profile and can be picked again in bills, transactions and budgets. The overview shows monthly cash flow, savings rate, spending categories and a six-month income/spending chart. The Transactions page searches, filters by account and pages through history in groups of 50. The calculators estimate mortgage repayments, mortgage affordability, savings growth and the cost of a repeating spending habit.
+1. Install [Docker Desktop](https://docs.docker.com/desktop/) and open it. On Linux, you can use [Docker Engine with Compose](https://docs.docker.com/compose/install/).
+2. On this GitHub page, select **Code → Download ZIP**. Unzip it and open a terminal in the folder containing `compose.prod.yaml`.
+3. Copy and run:
 
-Open **Accounts** to add an account and set its opening balance to the amount before the first transaction you recorded for it. A card can start with a negative balance to represent an amount owed. Each profile starts with a zero-opening-balance Current account; after an upgrade, existing profile transactions are assigned to that account without changing the transactions. You can adjust its opening balance later to reflect money already held when tracking began. Balances are calculated through today from the opening balance, recorded income/expense transactions and transfers; they are app-ledger figures and are not synced with a bank. Transactions, reviewed bill payments and CSV statement imports ask which account receives the activity. A transfer moves a positive amount between two accounts in the same profile and changes both balances without adding to income, spending, budgets or cash flow. Savings goals remain a separate planning tracker; transferring into a savings account does not automatically update a goal.
+   ```text
+   docker compose -f compose.prod.yaml up -d
+   ```
 
-Savings goals with a target date compare the remaining balance and current monthly contribution with the time left. When the pace is too slow, the goal card shows an estimated monthly amount needed to reach the target, assuming one contribution in each available calendar month. A passed target date is flagged; a completed goal does not show a warning.
+4. Open [http://127.0.0.1:5000](http://127.0.0.1:5000) on that computer. Create your account with a password of at least 12 characters.
 
-Regular bills can be daily, weekly, every two weeks, every four weeks, monthly, every three months, or yearly. Enter the amount paid each time; Bills, Overview, and Budgets show its average monthly planning cost. A weekly amount uses 52 ÷ 12, a yearly amount uses 1 ÷ 12, and each monthly equivalent rounds to the nearest cent. Actual calendar months can contain a different number of payments. Bills are planning entries and do not create spending transactions automatically. Existing bills upgrade as monthly without changing their amounts or due days.
+The Compose file downloads the published `0.1.0` image and keeps your data in a Docker volume. To see whether it is running, use `docker compose -f compose.prod.yaml ps`. To stop it, use `docker compose -f compose.prod.yaml stop`; run the command in step 3 to start it again.
 
-The Overview and Regular Bills pages also show **Scheduled bill payments** for the selected month. This uses actual due dates, separate from the monthly planning average. The scheduled value is split into occurrences linked to transactions and occurrences not linked yet; unlinked payments are split into due-now and upcoming amounts. The linked transaction amount is shown separately because an imported payment may be edited to a different amount. A manually entered transaction is not automatically linked to a bill, so check for similar expenses before importing. Non-monthly bills without a first payment date are flagged because their due dates cannot be calculated. Recorded cash flow is income less recorded expense transactions, not an account balance or a forecast.
+## Use Docker without Compose
 
-To record paid bills, choose the month on **Regular bills** and click **Import into transactions**. The review lists actual scheduled payment occurrences, their full payment amounts and due dates. Click **Select all ready**, uncheck anything you have not paid, then **Import selected**. Future payments and payments already imported are unavailable. A similar manually entered expense is flagged and omitted from Select all ready; check it yourself only if it really is a separate payment. Monthly bills use their saved day of month (clipped to the last day in short months). For weekly, quarterly, yearly and other non-monthly bills, save a **First payment date** on the bill so the app can find actual occurrences. Without that date, the review offers a shortcut to edit the bill. Imported payments appear in actual spending, cash flow, budgets and Transactions; monthly planning averages remain separate. If the actual payment date or amount differs, edit the transaction after import or enter it manually. Commuting plans are estimates and are not offered for import.
+If you already use Docker and just want to start the image, copy these commands into a terminal:
 
-Transactions record payments that have happened, so the form accepts dates through today. Older future-dated transactions, if any, remain visible and editable in Transactions but are excluded from actual spending, budgets, recent activity and the overview chart until their date arrives. Use Regular Bills and commuting plans for future planning amounts.
-
-Use **Duplicate** beside a transaction to open a prefilled new-transaction form. It copies the type, amount, category and note, sets the date to today, and saves a separate record only after you review and submit the form. A duplicated bill payment is a normal transaction and is not linked to the bill-import history.
-
-To import a bank statement, open **Transactions → Import CSV statement**. Choose a CSV file with a header and up to 500 payments (1 MB), map its date, description, and signed amount or separate debit/credit columns, then choose the date order, decimal separator, and amount direction. The preview suggests categories from matching saved descriptions, labels expense and income rows, and flags exact or probable matches against this profile and earlier rows in the file. Review and edit any row, uncheck rows to skip them, and explicitly acknowledge a legitimate duplicate before including it. A malformed row can be corrected in the review. The server rechecks all selected dates, amounts and duplicates while saving; a failed batch leaves no partial transactions. Imports are listed per profile with their filename and added/skipped counts. Re-importing a previously saved row from the same CSV is blocked even if its transaction was edited later; manually entered payments can still appear as probable duplicates and need review.
-
-To move records to another user, open **Profiles & settings → Export all data** and keep the downloaded JSON file private. The version 2 export contains every profile with its accounts, opening balances, transfers, transaction-to-account assignments, budgets, goals, bills, commuting plans, saved categories, and bill and statement import history with transaction links. Earlier version 1 exports can also be imported; their transactions go to a default Current account with a zero opening balance. The export does not contain the user email, password, signing key or sign-in sessions. Create the new user, then use **Import data** in that user's settings and select the export file. Import is available only while that user has one initial empty profile with its default account; it replaces the empty profile with the exported profiles and rejects users who already contain records. The operation is atomic, so an invalid file does not leave partial records. Files up to 50 MB are accepted. Keep a separate backup of the server's `instance` directory if you need to move credentials or recover the full server.
-
-Regular Bills also has commuting plans. Choose Car for daily round-trip miles, **UK imperial mpg**, and fuel price per litre in your profile currency; the estimate covers fuel. Choose Public transport for a daily return fare. Choose the weekdays you actually commute, enter annual leave or other days off as dates or inclusive date ranges (`YYYY-MM-DD..YYYY-MM-DD`), and optionally exclude official UK bank holidays for your region. [GOV.UK's bank-holiday JSON](https://www.gov.uk/bank-holidays.json) supplies the dates when available; the app warns if the data cannot be checked. Bank holidays are included by default because [employers do not have to give paid leave on those dates](https://www.gov.uk/bank-holidays). The month picker shows that month's expected commuting days and cost. Commuting adds to the Bills, Overview, and Budgets planning total for the selected month, while actual spending remains based on recorded transactions. Add parking, tolls, or other non-fuel costs as separate regular bills if needed.
-
-In a commuting plan, choose **Annual leave allowance — monthly estimate** and enter a whole number such as 25 if you do not know the dates. The number should be days that would otherwise be commuting days. The app spreads it across the calendar year in proportion to the selected commuting weekdays in each month, after any selected bank holidays; those holidays are not counted within the annual allowance. The resulting month cost is an estimate, because the exact timing of leave is unknown. Choose **Exact dates — precise month** when you know the dates. Existing commuting plans retain their saved exact dates after upgrading. Displayed estimated day counts round to two decimals; costs are calculated before that display rounding.
-
-The UK mortgage affordability view compares the loan against selected published income-multiple limits from Nationwide, HSBC and Santander, checked on 15 September 2026. Select a property type for Santander's over-90% LTV screen, because the published house and flat limits differ. After 45 days without a criteria review, the calculator stops claiming a loan fits a sampled published cap and asks the user to open the current lender links. It also compares the estimated monthly repayment with the take-home pay and costs you enter and shows a scenario with an interest rate two percentage points higher. The scenario is a personal planning check; it does not reproduce a lender's private affordability model. Published income multiples are ceilings, and a lender's Agreement or Decision in Principle is needed for a personalised borrowing estimate. Calculator inputs stay in the browser and are not saved to SQLite.
-
-## Run locally
-
-For a Docker deployment, use [DEPLOYMENT.md](DEPLOYMENT.md). The published release image is `ghcr.io/mariof1/pocket-ledger:0.1.0`; the supplied Compose file keeps its host port on loopback and stores data in a named volume.
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-.venv\Scripts\python.exe app.py
+```text
+docker volume create pocket-ledger-data
+docker run -d --name pocket-ledger --restart unless-stopped -p 127.0.0.1:5000:5000 -v pocket-ledger-data:/data ghcr.io/mariof1/pocket-ledger:0.1.0
 ```
 
-Open [http://127.0.0.1:5000](http://127.0.0.1:5000), create an account with a password of at least 12 characters, and start adding records. The app starts on the local computer only. To choose another port, set `LEDGER_PORT` before running it.
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000). Later, use `docker stop pocket-ledger` and `docker start pocket-ledger` to stop or start it without deleting your data.
 
-SQLite data, server-side sessions and the signing key are kept in `instance/`, which is excluded from Git. Back up that directory to retain accounts and financial records. Existing accounts must sign in once after upgrading from a version that used cookie-only sessions. Set `LEDGER_INSTANCE` to use a different data directory. `LEDGER_SECRET_KEY` can override the generated signing key.
+## Keep your data safe
 
-The server now records its SQLite schema version and runs missing upgrades inside one transaction at startup. A failed upgrade rolls back its database changes, and an app version older than the database refuses to open it. Account/profile and statement routes live in separate server files, while monthly schedule maths and migration steps have their own modules. The browser loads ordered state, page, calculator, form and event scripts; CSS is split into tokens, shared components and page rules.
+Both options save accounts and records in a Docker volume, separate from the downloaded files. Back up that volume before moving to another computer or upgrading. **Profiles & settings → Export all data** can move records to a new user, but a full server backup must also keep the database and signing key. See the [backup and upgrade steps](DEPLOYMENT.md).
 
-Before upgrading or restoring, make a verified online database backup (the server can stay running):
+The supplied setup opens only on the computer running Docker. For access from other devices, follow the [HTTPS setup instructions](DEPLOYMENT.md).
 
-```powershell
-.venv\Scripts\python.exe backup_database.py
-```
-
-The command prints its new file under `instance/backups/`. For a rollback, stop the Pocket Ledger server, keep a backup of the current database, then copy the chosen backup over `instance/ledger.sqlite3` and start the app version that created it. For example, after checking the backup filename:
-
-```powershell
-Copy-Item -LiteralPath 'instance/backups/ledger-YYYYMMDD-HHMMSS.sqlite3' -Destination 'instance/ledger.sqlite3' -Force
-```
-
-Keep `instance/secret.key` with the database when moving to another server; the database backup alone does not include that signing key. The export/import feature moves user records between accounts but does not replace a full server backup.
-
-Change your password in Profiles & settings; this signs out other sessions. If you forget it, the server owner can reset it from a console on the server:
-
-```powershell
-.venv\Scripts\python.exe reset_password.py --email your@email.com
-```
-
-The command prompts for the new password without putting it in command history and signs out all existing sessions for that account.
-
-For access from another device, keep the host port bound to loopback and configure an HTTPS reverse proxy on the same server that forwards to `127.0.0.1:5000`. Set `LEDGER_HTTPS=1` when the browser connects to the proxy over HTTPS so cookies use the Secure flag. Direct Python runs refuse a non-loopback `LEDGER_HOST` value; the Docker container listens internally while Compose restricts its published host port. Review the linked official lender criteria before updating `static/mortgage-guide.js` caps and its checked date; the embedded caps are a dated planning snapshot.
-
-## Verify
-
-```powershell
-.venv\Scripts\python.exe -m unittest -v test_app.py test_migrations.py
-node --check static/state.js
-node --check static/pages.js
-node --check static/calculators.js
-node --check static/forms.js
-node --check static/app.js
-node --test test_mortgage_guide.js
-```
+For help using bills, statement imports, profiles and calculators, see the [user guide](USER_GUIDE.md). Developers can find [tests and contribution notes](CONTRIBUTING.md) and the [build pipeline](https://github.com/mariof1/pocket-ledger/actions/workflows/pipeline.yml). See [releases](https://github.com/mariof1/pocket-ledger/releases) for newer published images.
