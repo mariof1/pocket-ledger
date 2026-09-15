@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.venv/
+instance/
+*.pyc
+.env
+.env.*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+secret.key
+pocket-ledger-*.json

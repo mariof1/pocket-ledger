@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8f5">
+  <title>Pocket Ledger — spending & savings</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/mortgage-guide.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div id="auth" class="auth-page hidden">
+    <div class="auth-art">
+      <div class="brand brand-light"><span class="brand-mark">✳</span><span>Pocket Ledger</span></div>
+      <div class="auth-art-content">
+        <span class="eyebrow">A clearer view of your money</span>
+        <h1>Make room for<br><em>what matters.</em></h1>
+        <p>Bring your spending, bills, budgets and savings plans together in one calm place.</p>
+        <div class="art-card">
+          <div class="art-card-top"><span>Monthly outlook</span><span>↗</span></div>
+          <div class="art-number">£2,480<span>.00</span></div>
+          <div class="art-lines"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="art-card-bottom"><span>Income</span><span>Spending</span><span>Savings</span></div>
+        </div>
+      </div>
+      <div class="auth-art-footer">Your finances, at your pace.</div>
+    </div>
+    <div class="auth-form-wrap">
+      <div class="auth-mobile-brand brand"><span class="brand-mark">✳</span><span>Pocket Ledger</span></div>
+      <div class="auth-form-area">
+        <div class="auth-icon">✳</div>
+        <h2 id="auth-title">Welcome back</h2>
+        <p id="auth-subtitle" class="muted">Sign in to pick up where you left off.</p>
+        <div id="auth-error" class="alert hidden" role="alert"></div>
+        <form id="auth-form">
+          <label>Email address<input type="email" name="email" autocomplete="email" placeholder="you@example.com" required></label>
+          <label>Password<input id="auth-password" type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required></label>
+          <p id="password-hint" class="field-hint hidden">Use at least 12 characters.</p>
+          <button class="btn btn-primary auth-submit" type="submit" id="auth-submit">Sign in <span>→</span></button>
+        </form>
+        <p class="auth-switch"><span id="auth-switch-label">New here?</span> <button type="button" class="text-button" id="auth-toggle">Create an account</button></p>
+      </div>
+      <div class="auth-footnote">Your data stays in this server's private database.</div>
+    </div>
+  </div>
+
+  <div id="app" class="shell hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-mark">✳</span><span>Pocket Ledger</span></div>
+      <button class="workspace-picker" data-page="settings" title="Manage profiles"><span class="workspace-avatar" id="profile-avatar">P</span><span class="workspace-label"><small>WORKSPACE</small><strong id="sidebar-profile">Personal</strong></span><span class="chevron">⌄</span></button>
+      <div class="side-label">MENU</div>
+      <nav class="side-nav" aria-label="Main navigation">
+        <button data-page="dashboard" class="active"><span class="nav-icon">◫</span> Overview</button>
+        <button data-page="transactions"><span class="nav-icon">⇄</span> Transactions</button>
+        <button data-page="budgets"><span class="nav-icon">▤</span> Budgets</button>
+        <button data-page="goals"><span class="nav-icon">◎</span> Savings goals</button>
+        <button data-page="bills"><span class="nav-icon">▦</span> Regular bills</button>
+        <button data-page="calculators"><span class="nav-icon">⌁</span> Calculators</button>
+      </nav>
+      <div class="side-bottom">
+        <button data-page="settings" class="settings-link"><span class="nav-icon">⚙</span> Profiles & settings</button>
+        <div class="side-user"><span class="user-avatar" id="user-avatar">U</span><span><strong id="user-email">Account</strong><small>Private account</small></span><button id="logout" title="Sign out" aria-label="Sign out">↗</button></div>
+      </div>
+    </aside>
+    <button class="menu-scrim hidden" id="menu-scrim" type="button" aria-label="Close menu"></button>
+    <main class="main">
+      <header class="topbar">
+        <button class="mobile-menu icon-button" id="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <div class="breadcrumb">Your workspace <span>›</span> <strong id="breadcrumb-page">Overview</strong></div>
+        <div class="top-actions"><span class="today-label" id="today-label"></span><span class="top-divider"></span><button class="icon-button" id="profile-shortcut" title="Switch profile" aria-label="Switch profile">♙</button><button class="btn btn-primary top-add" id="quick-add">＋ <span>Add transaction</span></button></div>
+      </header>
+      <div class="page-content" id="page-content"></div>
+    </main>
+  </div>
+  <dialog id="form-dialog"><div class="dialog-content"><div class="dialog-heading"><div><span class="eyebrow" id="dialog-eyebrow"></span><h2 id="dialog-title"></h2></div><button class="icon-button" id="dialog-close" aria-label="Close">×</button></div><div id="dialog-body"></div></div></dialog>
+  <div id="toast" class="toast hidden" role="status"></div>
+</body>
+</html>
