@@ -1,7 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const localDate = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
-const state = { bootstrap: null, data: null, transactions: null, statementHistory: [], statement: null, txOffset: 0, txRequest: 0, page: 'dashboard', month: localDate().slice(0, 7), filter: '', kind: 'all', calc: 'mortgage', mortgageView: 'payments', mortgageInputs: {}, authMode: 'login' };
-const pages = { dashboard: 'Overview', transactions: 'Transactions', budgets: 'Budgets', goals: 'Savings goals', bills: 'Regular bills', calculators: 'Calculators', settings: 'Profiles & settings' };
+const state = { bootstrap: null, data: null, transactions: null, statementHistory: [], statement: null, txOffset: 0, txRequest: 0, page: 'dashboard', month: localDate().slice(0, 7), filter: '', kind: 'all', accountFilter: '', calc: 'mortgage', mortgageView: 'payments', mortgageInputs: {}, authMode: 'login' };
+const pages = { dashboard: 'Overview', transactions: 'Transactions', accounts: 'Accounts', budgets: 'Budgets', goals: 'Savings goals', bills: 'Regular bills', calculators: 'Calculators', settings: 'Profiles & settings' };
 const expenseCategories = ['Housing','Groceries','Transport','Utilities','Eating out','Shopping','Entertainment','Health','Travel','Education','Other'];
 const incomeCategories = ['Salary','Freelance','Investment','Gift','Other'];
 const billFrequencies = [
@@ -44,23 +44,24 @@ async function boot() {
 }
 async function loadData() {
   state.data = await api(`/api/data?month=${encodeURIComponent(state.month)}`);
+  if (state.accountFilter && !state.data.accounts.some(item => String(item.id) === state.accountFilter)) { state.accountFilter = ''; state.txOffset = 0; }
   $('#sidebar-profile').textContent = state.data.profile.name;
   $('#profile-avatar').textContent = state.data.profile.name.charAt(0).toUpperCase();
   if (state.page === 'transactions') await loadTransactions(); else render();
 }
 async function loadTransactions() {
   const requestId = ++state.txRequest;
-  const requestedFilter = state.filter, requestedKind = state.kind;
-  let query = new URLSearchParams({ offset: String(state.txOffset), kind: state.kind, search: state.filter });
+  const requestedFilter = state.filter, requestedKind = state.kind, requestedAccount = state.accountFilter;
+  let query = new URLSearchParams({ offset: String(state.txOffset), kind: state.kind, search: state.filter, account_id: state.accountFilter });
   let listing = await api(`/api/transactions?${query}`);
-  if (requestId !== state.txRequest || state.page !== 'transactions' || requestedFilter !== state.filter || requestedKind !== state.kind) return;
+  if (requestId !== state.txRequest || state.page !== 'transactions' || requestedFilter !== state.filter || requestedKind !== state.kind || requestedAccount !== state.accountFilter) return;
   state.transactions = listing;
   state.statementHistory = (await api('/api/statements/history')).batches;
   if (state.txOffset > 0 && state.txOffset >= state.transactions.total) {
     state.txOffset = Math.max(0, Math.floor((state.transactions.total - 1) / 50) * 50);
-    query = new URLSearchParams({ offset: String(state.txOffset), kind: state.kind, search: state.filter });
+    query = new URLSearchParams({ offset: String(state.txOffset), kind: state.kind, search: state.filter, account_id: state.accountFilter });
     listing = await api(`/api/transactions?${query}`);
-    if (requestId !== state.txRequest || state.page !== 'transactions' || requestedFilter !== state.filter || requestedKind !== state.kind) return;
+    if (requestId !== state.txRequest || state.page !== 'transactions' || requestedFilter !== state.filter || requestedKind !== state.kind || requestedAccount !== state.accountFilter) return;
     state.transactions = listing;
   }
   const searching = document.activeElement?.id === 'transaction-search';
@@ -114,6 +115,8 @@ function showFormError(form, error) {
     [/^Daily return fare/, 'fare'], [/^Annual leave days/, 'annual_leave_days'],
     [/^Dates off|^Excluded dates/, 'excluded_dates'],
     [/^Bill name|^Goal name|^Commute name|^Profile name/, 'name'],
+    [/^Account name/, 'name'], [/^Opening balance/, 'opening_balance'],
+    [/^Transfer date/, 'occurred_on'], [/^Transfer amount/, 'amount'],
     [/^Budget/, 'limit'], [/^Saved/, 'saved'], [/^Target/, 'target'],
     [/^Amount/, 'amount'], [/^Date/, 'occurred_on'], [/^Month/, 'month'],
     [/^Note/, 'note'], [/^Category/, 'category'],
@@ -174,18 +177,26 @@ function panelHead(title, subtitle = '', link = '') { return `<div class="panel-
 function empty(icon, title, detail = '') { return `<div class="empty"><div class="empty-icon">${icon}</div><strong>${title}</strong>${detail ? `<p>${detail}</p>` : ''}</div>`; }
 function render() {
   if (!state.data) return;
-  const view = { dashboard: dashboard, transactions: transactionsPage, budgets: budgetsPage, goals: goalsPage, bills: billsPage, calculators: calculatorsPage, settings: settingsPage }[state.page];
+  const view = { dashboard: dashboard, transactions: transactionsPage, accounts: accountsPage, budgets: budgetsPage, goals: goalsPage, bills: billsPage, calculators: calculatorsPage, settings: settingsPage }[state.page];
   $('#page-content').innerHTML = view();
   if (state.page === 'calculators') updateCalculator();
 }
 function metric(label, value, foot, icon, tone = '') {
   return `<div class="metric-card"><div class="metric-top"><span>${label}</span><span class="metric-icon ${tone}">${icon}</span></div><div class="metric-value">${value}</div><div class="metric-foot">${foot}</div></div>`;
 }
+const accountName = id => state.data.accounts.find(account => account.id === id)?.name || 'Unknown account';
+function accountOptions(selected) {
+  const preferred = state.data.accounts.find(account => account.kind === 'current')?.id || state.data.accounts[0]?.id;
+  return state.data.accounts.map(account => `<option value="${account.id}" ${account.id === (selected || preferred) ? 'selected' : ''}>${escapeHtml(account.name)} · ${escapeHtml(account.kind)}</option>`).join('');
+}
+function accountField(label, name = 'account_id', selected) {
+  return `<label class="full">${label}<select name="${name}" required>${accountOptions(selected)}</select></label>`;
+}
 function transactionRows(items, compact = false) {
-  return items.map(tx => `<tr><td><strong>${escapeHtml(tx.note || tx.category)}</strong><span class="sub">${escapeHtml(tx.kind === 'income' ? 'Income' : 'Expense')}</span></td><td><span class="category-pill">${escapeHtml(tx.category)}</span></td><td>${shortDate(tx.occurred_on)}</td><td class="amount ${tx.kind === 'income' ? 'positive' : ''}">${tx.kind === 'income' ? '+' : '−'}${fmt(tx.amount_cents)}</td>${compact ? '' : `<td class="action-cell"><button class="table-action" data-action="duplicate-transaction" data-id="${tx.id}">Duplicate</button><button class="table-action" data-action="edit-transaction" data-id="${tx.id}">Edit</button><button class="table-action delete" data-action="delete-transaction" data-id="${tx.id}">Delete</button></td>`}</tr>`).join('');
+  return items.map(tx => `<tr><td><strong>${escapeHtml(tx.note || tx.category)}</strong><span class="sub">${escapeHtml(tx.kind === 'income' ? 'Income' : 'Expense')} · ${escapeHtml(accountName(tx.account_id))}</span></td><td><span class="category-pill">${escapeHtml(tx.category)}</span></td><td>${shortDate(tx.occurred_on)}</td><td class="amount ${tx.kind === 'income' ? 'positive' : ''}">${tx.kind === 'income' ? '+' : '−'}${fmt(tx.amount_cents)}</td>${compact ? '' : `<td class="action-cell"><button class="table-action" data-action="duplicate-transaction" data-id="${tx.id}">Duplicate</button><button class="table-action" data-action="edit-transaction" data-id="${tx.id}">Edit</button><button class="table-action delete" data-action="delete-transaction" data-id="${tx.id}">Delete</button></td>`}</tr>`).join('');
 }
 function mobileTransactionCards(items, compact = false) {
-  return `<div class="mobile-record-list">${items.map(tx => `<article class="mobile-record"><div><strong>${escapeHtml(tx.note || tx.category)}</strong><span class="amount ${tx.kind === 'income' ? 'positive' : ''}">${tx.kind === 'income' ? '+' : '−'}${fmt(tx.amount_cents)}</span></div><small>${escapeHtml(tx.category)} · ${shortDate(tx.occurred_on)} · ${tx.kind === 'income' ? 'Income' : 'Expense'}</small>${compact ? '' : `<div class="mobile-record-actions"><button class="table-action" data-action="duplicate-transaction" data-id="${tx.id}">Duplicate</button><button class="table-action" data-action="edit-transaction" data-id="${tx.id}">Edit</button><button class="table-action delete" data-action="delete-transaction" data-id="${tx.id}">Delete</button></div>`}</article>`).join('')}</div>`;
+  return `<div class="mobile-record-list">${items.map(tx => `<article class="mobile-record"><div><strong>${escapeHtml(tx.note || tx.category)}</strong><span class="amount ${tx.kind === 'income' ? 'positive' : ''}">${tx.kind === 'income' ? '+' : '−'}${fmt(tx.amount_cents)}</span></div><small>${escapeHtml(tx.category)} · ${shortDate(tx.occurred_on)} · ${tx.kind === 'income' ? 'Income' : 'Expense'} · ${escapeHtml(accountName(tx.account_id))}</small>${compact ? '' : `<div class="mobile-record-actions"><button class="table-action" data-action="duplicate-transaction" data-id="${tx.id}">Duplicate</button><button class="table-action" data-action="edit-transaction" data-id="${tx.id}">Edit</button><button class="table-action delete" data-action="delete-transaction" data-id="${tx.id}">Delete</button></div>`}</article>`).join('')}</div>`;
 }
 function billStatusPanel() {
   const status = state.data.bill_status;
@@ -219,9 +230,21 @@ function transactionsPage() {
   const end = Math.min(listing.offset + rows.length, listing.total);
   const history = state.statementHistory || [];
   return heading('Transactions', 'Every pound in and out, in one place.', `<button class="btn btn-secondary" data-action="import-statement">Import CSV statement</button><button class="btn btn-primary" data-action="add-transaction">＋ Add transaction</button>`)
-    + `<div class="toolbar"><input class="search-input" id="transaction-search" placeholder="Search transactions" value="${escapeHtml(state.filter)}" aria-label="Search transactions"><select id="kind-filter" aria-label="Filter transaction type"><option value="all" ${state.kind === 'all' ? 'selected' : ''}>All activity</option><option value="income" ${state.kind === 'income' ? 'selected' : ''}>Income</option><option value="expense" ${state.kind === 'expense' ? 'selected' : ''}>Expenses</option></select><span class="muted" style="font-size:11px">${listing.total} ${listing.total === 1 ? 'record' : 'records'}</span></div>`
+    + `<div class="toolbar"><input class="search-input" id="transaction-search" placeholder="Search transactions" value="${escapeHtml(state.filter)}" aria-label="Search transactions"><select id="kind-filter" aria-label="Filter transaction type"><option value="all" ${state.kind === 'all' ? 'selected' : ''}>All activity</option><option value="income" ${state.kind === 'income' ? 'selected' : ''}>Income</option><option value="expense" ${state.kind === 'expense' ? 'selected' : ''}>Expenses</option></select><select id="account-filter" aria-label="Filter account"><option value="">All accounts</option>${state.data.accounts.map(item => `<option value="${item.id}" ${state.accountFilter === String(item.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span class="muted" style="font-size:11px">${listing.total} ${listing.total === 1 ? 'record' : 'records'}</span></div>`
     + `<section class="panel wide-panel">${rows.length ? `<div class="table-wrap desktop-record-table"><table class="data-table"><thead><tr><th>Transaction</th><th>Category</th><th>Date</th><th style="text-align:right">Amount</th><th></th></tr></thead><tbody>${transactionRows(rows)}</tbody></table></div>${mobileTransactionCards(rows)}` : empty('⇄', 'Nothing to show', 'Try a different search or add a transaction.')}${listing.total ? `<div class="pager"><span>Showing ${start}–${end} of ${listing.total}</span><div><button class="btn btn-outline" data-action="tx-prev" ${listing.offset === 0 ? 'disabled' : ''}>Previous</button><button class="btn btn-outline" data-action="tx-next" ${end >= listing.total ? 'disabled' : ''}>Next</button></div></div>` : ''}</section>`
     + `<section class="panel statement-history">${panelHead('Statement import history', 'The last 20 reviewed CSV imports in this profile')}${history.length ? `<ul>${history.map(batch => `<li><strong>${escapeHtml(batch.filename)}</strong><span>${batch.imported_count} added · ${batch.skipped_count} skipped · ${escapeHtml(batch.created_at.slice(0, 16).replace('T', ' '))}</span></li>`).join('')}</ul>` : `<p class="setting-note">No statements imported in this profile yet.</p>`}</section>`;
+}
+function accountsPage() {
+  const accounts = state.data.accounts;
+  const transfers = state.data.transfers;
+  const total = sum(accounts, 'balance_cents');
+  const kindLabels = { current: 'Current', savings: 'Savings', card: 'Card' };
+  const cards = accounts.map(account => `<article class="account-card"><div class="account-card-top"><span>${escapeHtml(kindLabels[account.kind])} account</span><span class="account-symbol">${account.kind === 'card' ? '▥' : account.kind === 'savings' ? '◎' : '▣'}</span></div><h2>${escapeHtml(account.name)}</h2><strong class="${account.balance_cents < 0 ? 'negative' : ''}">${fmt(account.balance_cents)}</strong><small>App-ledger balance as of ${shortDate(state.data.balance_as_of)}</small><div class="account-card-foot"><span>Opening balance ${fmt(account.opening_balance_cents)}</span><div><button class="table-action" data-action="edit-account" data-id="${account.id}">Edit</button><button class="table-action delete" data-action="delete-account" data-id="${account.id}" ${accounts.length === 1 ? 'disabled' : ''}>Delete</button></div></div></article>`).join('');
+  const transferRows = transfers.map(item => `<div class="account-transfer-row"><div><strong>${escapeHtml(accountName(item.source_account_id))} → ${escapeHtml(accountName(item.target_account_id))}</strong><small>${shortDate(item.occurred_on)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</small></div><b>${fmt(item.amount_cents)}</b><div><button class="table-action" data-action="edit-transfer" data-id="${item.id}">Edit</button><button class="table-action delete" data-action="delete-transfer" data-id="${item.id}">Delete</button></div></div>`).join('');
+  return heading('Accounts & transfers', 'Balances calculated from your opening amounts, transactions and transfers.', `<button class="btn btn-secondary" data-action="add-transfer" ${accounts.length < 2 ? 'disabled' : ''}>Transfer money</button><button class="btn btn-primary" data-action="add-account">＋ Add account</button>`)
+    + `<section class="panel account-overview"><div><small>TOTAL ACROSS ACCOUNTS · ${shortDate(state.data.balance_as_of)}</small><strong class="${total < 0 ? 'negative' : ''}">${fmt(total)}</strong></div><p>Card debt reduces this total. These are balances in Pocket Ledger, calculated through today; the app does not sync with your bank. Set each opening balance to the amount before its first recorded transaction. Transfers move money between your own accounts and do not add income or spending.</p></section>`
+    + `<div class="account-card-grid">${cards}</div>`
+    + `<section class="panel account-transfers">${panelHead('Transfers', `${monthLabel(state.month)} · up to 100 most recent`, `${monthPicker()}`)}${transfers.length ? `<div class="account-transfer-list">${transferRows}</div>` : empty('⇄', 'No transfers this month', accounts.length < 2 ? 'Add a second account to move money between them.' : 'Use Transfer money to record a move between your accounts.')}<p class="setting-note">Savings goals track planned progress separately. Moving funds to a savings account does not update a goal automatically.</p></section>`;
 }
 function budgetsPage() {
   const spent = state.data.monthly_totals.expense;
@@ -487,7 +510,15 @@ function modal(type, item = null, duplicate = false) {
   let title, eyebrow = 'MAKE A CHANGE', fields;
   if (type === 'transaction') {
     title = duplicate ? 'Duplicate transaction' : item ? 'Edit transaction' : 'Add transaction';
-    fields = `${duplicate ? '<p class="full setting-note">A new transaction will be created. Check the amount and today’s date before saving.</p>' : ''}${selectField('Type', 'kind', ['expense','income'], item?.kind || 'expense')}${field('Amount', 'amount', 'number', moneyValue(item?.amount_cents), 'min="0.01" step="0.01"')}${field('Category', 'category', 'text', item?.category || '', `list="category-options" maxlength="40"`)}${field('Date', 'occurred_on', 'date', duplicate ? localDate() : item?.occurred_on || localDate(), `max="${localDate()}"`)}<label class="full">Note (optional)<input name="note" type="text" value="${escapeHtml(item?.note || '')}" maxlength="200" placeholder="What was it for?"></label>${categoryDatalist([...expenseCategories, ...incomeCategories])}`;
+    fields = `${duplicate ? '<p class="full setting-note">A new transaction will be created. Check the amount and today’s date before saving.</p>' : ''}${accountField('Account', 'account_id', item?.account_id)}${selectField('Type', 'kind', ['expense','income'], item?.kind || 'expense')}${field('Amount', 'amount', 'number', moneyValue(item?.amount_cents), 'min="0.01" step="0.01"')}${field('Category', 'category', 'text', item?.category || '', `list="category-options" maxlength="40"`)}${field('Date', 'occurred_on', 'date', duplicate ? localDate() : item?.occurred_on || localDate(), `max="${localDate()}"`)}<label class="full">Note (optional)<input name="note" type="text" value="${escapeHtml(item?.note || '')}" maxlength="200" placeholder="What was it for?"></label>${categoryDatalist([...expenseCategories, ...incomeCategories])}`;
+  } else if (type === 'account') {
+    title = item ? 'Edit account' : 'Add account'; eyebrow = 'YOUR MONEY IN ONE PLACE';
+    fields = `${field('Account name', 'name', 'text', item?.name || '', 'maxlength="40" placeholder="e.g. Main current or Holiday savings"')}<label>Account type<select name="kind"><option value="current" ${!item || item.kind === 'current' ? 'selected' : ''}>Current account</option><option value="savings" ${item?.kind === 'savings' ? 'selected' : ''}>Savings account</option><option value="card" ${item?.kind === 'card' ? 'selected' : ''}>Card account</option></select></label>${field('Opening balance', 'opening_balance', 'number', moneyValue(item?.opening_balance_cents) || '0.00', 'step="0.01" min="-100000000" max="100000000"')}<p class="full setting-note">Enter the balance before the first transaction you record here. For a card with an amount owed, enter a negative opening balance. Editing this amount recalculates the balance.</p>`;
+  } else if (type === 'transfer') {
+    title = item ? 'Edit transfer' : 'Transfer between accounts'; eyebrow = 'MOVE MONEY';
+    const source = item?.source_account_id || state.data.accounts.find(account => account.kind === 'current')?.id || state.data.accounts[0].id;
+    const target = item?.target_account_id || state.data.accounts.find(account => account.id !== source)?.id;
+    fields = `${accountField('From account', 'source_account_id', source)}${accountField('To account', 'target_account_id', target)}${field('Amount moved', 'amount', 'number', moneyValue(item?.amount_cents), 'min="0.01" step="0.01"')}${field('Transfer date', 'occurred_on', 'date', item?.occurred_on || localDate(), `max="${localDate()}"`)}<label class="full">Note (optional)<input name="note" maxlength="200" value="${escapeHtml(item?.note || '')}" placeholder="e.g. Move to holiday savings"></label><p class="full setting-note">This reduces one account balance and increases the other by the same amount. It does not count as spending or income.</p>`;
   } else if (type === 'budget') {
     title = 'Set a monthly budget';
     fields = `${field('Month', 'month', 'month', state.month)}${field('Category', 'category', 'text', '', 'list="category-options" maxlength="40"')}${field('Monthly limit', 'limit', 'number', '', 'min="0.01" step="0.01"')}${categoryDatalist(expenseCategories)}`;
@@ -579,7 +610,7 @@ function statementReviewRow(item) {
 function renderStatementReview() {
   const { preview, filename } = state.statement;
   const cats = [...new Set([...state.data.categories, ...expenseCategories, ...incomeCategories])];
-  statementDialog('Review statement rows', `<form id="statement-review-form" novalidate><p class="setting-note"><strong>${escapeHtml(filename)}</strong> · ${preview.row_count} rows. Check dates, expense/income signs and categories. Exact and probable duplicates are skipped by default; you can explicitly include a legitimate repeat.</p><div class="statement-review-toolbar"><div><button type="button" class="table-action" data-action="statement-select-clean">Select ready rows</button><button type="button" class="table-action" data-action="statement-clear">Clear selection</button></div><strong id="statement-selection-summary" aria-live="polite"></strong></div><datalist id="statement-categories">${cats.map(cat => `<option value="${escapeHtml(cat)}"></option>`).join('')}</datalist><div class="statement-review-list">${preview.rows.map(statementReviewRow).join('')}</div><p class="setting-note">Only checked rows are saved. A failed batch saves no transactions. After import, the file and import count appear in this profile's history.</p><div class="form-actions"><button type="button" class="btn btn-outline" data-action="statement-back-map">Back to columns</button><button type="submit" class="btn btn-primary" id="statement-save" disabled>Import selected</button></div></form>`);
+  statementDialog('Review statement rows', `<form id="statement-review-form" novalidate><p class="setting-note"><strong>${escapeHtml(filename)}</strong> · ${preview.row_count} rows. Check dates, expense/income signs and categories. Exact and probable duplicates are skipped by default; you can explicitly include a legitimate repeat.</p><div class="import-account-choice">${accountField('Import into account')}</div><div class="statement-review-toolbar"><div><button type="button" class="table-action" data-action="statement-select-clean">Select ready rows</button><button type="button" class="table-action" data-action="statement-clear">Clear selection</button></div><strong id="statement-selection-summary" aria-live="polite"></strong></div><datalist id="statement-categories">${cats.map(cat => `<option value="${escapeHtml(cat)}"></option>`).join('')}</datalist><div class="statement-review-list">${preview.rows.map(statementReviewRow).join('')}</div><p class="setting-note">Only checked rows are saved. A failed batch saves no transactions. After import, the file and import count appear in this profile's history.</p><div class="form-actions"><button type="button" class="btn btn-outline" data-action="statement-back-map">Back to columns</button><button type="submit" class="btn btn-primary" id="statement-save" disabled>Import selected</button></div></form>`);
   updateStatementSelection();
 }
 function updateStatementSelection() {
@@ -600,7 +631,8 @@ async function saveStatement(form) {
   if (!rows.length) throw new Error('Select at least one row to import.');
   const result = await api('/api/statements/save', { method: 'POST', body: JSON.stringify({
     text: state.statement.text, filename: state.statement.filename,
-    profile_id: state.statement.preview.profile_id, rows
+    profile_id: state.statement.preview.profile_id,
+    account_id: form.querySelector('[name="account_id"]').value, rows
   }) });
   state.statement = null;
   $('#form-dialog').close();
@@ -619,7 +651,7 @@ async function openBillImport() {
   const schedules = preview.needs_schedule.map(bill => `<div class="bill-schedule-item"><span>${escapeHtml(bill.name)} · ${escapeHtml(billFrequencyLabel(bill.frequency))}</span><button type="button" class="table-action" data-action="schedule-bill" data-id="${bill.id}">Set first payment date</button></div>`).join('');
   $('#dialog-eyebrow').textContent = 'REVIEW PAID BILLS';
   $('#dialog-title').textContent = 'Import bill payments';
-  $('#dialog-body').innerHTML = `<form id="bill-import-form"><p class="setting-note">Choose payments you have made in ${monthLabel(state.month)}. Each becomes an expense transaction at the bill's real amount and due date. Future and previously imported payments cannot be selected.</p><div class="bill-import-toolbar"><strong>${monthLabel(state.month)}</strong><div><button type="button" class="table-action" data-action="select-ready-bills">Select all ready</button><button type="button" class="table-action" data-action="clear-import-bills">Clear</button></div></div>${rows ? `<div class="bill-import-list">${rows}</div>` : empty('▦', 'No scheduled bill payments this month', 'Monthly bills appear here; other frequencies need a first payment date.')} ${schedules ? `<div class="bill-schedule-list"><strong>Set a schedule to import these bills</strong>${schedules}</div>` : ''}<p class="setting-note">If a payment date differs from its due date, add or edit its transaction with the actual date.</p><div class="form-actions"><button type="button" class="btn btn-outline" id="dialog-cancel">Cancel</button><button type="submit" class="btn btn-primary" id="bill-import-submit" disabled>Import selected</button></div></form>`;
+  $('#dialog-body').innerHTML = `<form id="bill-import-form"><p class="setting-note">Choose payments you have made in ${monthLabel(state.month)}. Each becomes an expense transaction at the bill's real amount and due date. Future and previously imported payments cannot be selected.</p><div class="import-account-choice">${accountField('Pay from account')}</div><div class="bill-import-toolbar"><strong>${monthLabel(state.month)}</strong><div><button type="button" class="table-action" data-action="select-ready-bills">Select all ready</button><button type="button" class="table-action" data-action="clear-import-bills">Clear</button></div></div>${rows ? `<div class="bill-import-list">${rows}</div>` : empty('▦', 'No scheduled bill payments this month', 'Monthly bills appear here; other frequencies need a first payment date.')} ${schedules ? `<div class="bill-schedule-list"><strong>Set a schedule to import these bills</strong>${schedules}</div>` : ''}<p class="setting-note">If a payment date differs from its due date, add or edit its transaction with the actual date.</p><div class="form-actions"><button type="button" class="btn btn-outline" id="dialog-cancel">Cancel</button><button type="submit" class="btn btn-primary" id="bill-import-submit" disabled>Import selected</button></div></form>`;
   $('#form-dialog').showModal();
   $('.dialog-content').scrollTop = 0;
   $('#dialog-close').focus();
@@ -638,7 +670,10 @@ async function saveBillImport(form) {
     return { bill_id: item.bill_id, due_on: item.due_on };
   });
   if (!selected.length) return showFormError(form, new Error('Select at least one paid bill.'));
-  const result = await api('/api/bills/import', { method: 'POST', body: JSON.stringify({ month: state.month, items: selected }) });
+  const result = await api('/api/bills/import', { method: 'POST', body: JSON.stringify({
+    month: state.month, items: selected,
+    account_id: form.querySelector('[name="account_id"]').value
+  }) });
   $('#form-dialog').close();
   await loadData();
   if (result.imported_count) await navigate('transactions');
@@ -650,7 +685,7 @@ async function saveForm(form) {
   if (type === 'commute') data.weekdays = new FormData(form).getAll('weekdays');
   if (type === 'bill' && data.category === '__new__') data.category = String(data.new_category || '').trim();
   delete data.new_category;
-  const route = { transaction: 'transactions', budget: 'budgets', goal: 'goals', bill: 'bills', commute: 'commutes', profile: 'profiles' }[type];
+  const route = { transaction: 'transactions', account: 'accounts', transfer: 'transfers', budget: 'budgets', goal: 'goals', bill: 'bills', commute: 'commutes', profile: 'profiles' }[type];
   await api(`/api/${route}${id ? `/${id}` : ''}`, { method: id ? 'PUT' : 'POST', body: JSON.stringify(data) });
   $('#form-dialog').close();
   if (type === 'profile') await boot(); else await loadData();
@@ -685,9 +720,9 @@ async function uploadAccount(form) {
 }
 function itemMessage(type, id) { return `${type.charAt(0).toUpperCase() + type.slice(1)} ${id ? 'updated' : 'saved'}.`; }
 async function deleteItem(type, id) {
-  const labels = { transaction: 'transaction', budget: 'budget', goal: 'savings goal', bill: 'regular bill', commute: 'commuting plan', profile: 'profile and all its records' };
+  const labels = { transaction: 'transaction', account: 'account', transfer: 'transfer', budget: 'budget', goal: 'savings goal', bill: 'regular bill', commute: 'commuting plan', profile: 'profile and all its records' };
   if (!confirm(`Delete this ${labels[type]}?`)) return;
-  await api(`/api/${{transaction:'transactions',budget:'budgets',goal:'goals',bill:'bills',commute:'commutes',profile:'profiles'}[type]}/${id}`, { method: 'DELETE' });
+  await api(`/api/${{transaction:'transactions',account:'accounts',transfer:'transfers',budget:'budgets',goal:'goals',bill:'bills',commute:'commutes',profile:'profiles'}[type]}/${id}`, { method: 'DELETE' });
   if (type === 'profile') await boot(); else await loadData();
   toast('Deleted.');
 }
@@ -741,7 +776,7 @@ document.addEventListener('click', async event => {
       return modal('transaction', item, true);
     }
     if (action.startsWith('add-')) return modal(action.slice(4));
-    if (action.startsWith('edit-')) { const type = action.slice(5); const list = { transaction: state.transactions?.transactions || [], goal: state.data.goals, bill: state.data.bills, commute: state.data.commutes || [] }[type]; return modal(type, list.find(item => item.id === id)); }
+    if (action.startsWith('edit-')) { const type = action.slice(5); const list = { transaction: state.transactions?.transactions || [], account: state.data.accounts, transfer: state.data.transfers, goal: state.data.goals, bill: state.data.bills, commute: state.data.commutes || [] }[type]; return modal(type, list.find(item => item.id === id)); }
     if (action.startsWith('delete-')) return await deleteItem(action.slice(7), id);
   } catch (error) { showError(error); }
 });
@@ -798,6 +833,7 @@ document.addEventListener('change', async event => {
   if (event.target.name === 'bill-occurrence') updateBillImportSelection();
   if (event.target.id === 'month-picker') { state.month = event.target.value; try { await loadData(); } catch (error) { showError(error); } }
   if (event.target.id === 'kind-filter') { state.kind = event.target.value; state.txOffset = 0; try { await loadTransactions(); } catch (error) { showError(error); } }
+  if (event.target.id === 'account-filter') { state.accountFilter = event.target.value; state.txOffset = 0; try { await loadTransactions(); } catch (error) { showError(error); } }
   if (event.target.id === 'bill-frequency') updateBillForm();
   if (event.target.id === 'commute-mode') updateCommuteForm();
   if (event.target.id === 'commute-leave-mode') updateCommuteForm();

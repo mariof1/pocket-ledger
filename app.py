@@ -21,6 +21,7 @@ from commute import REGIONS, estimate as commute_estimate, official_holidays, pa
 from data_transfer import destination_profile, export_account, import_account
 from statement_import import (csv_table, duplicate_for, normalize_note, statement_rows,
                               suggest_mapping, validate_mapping)
+from account_ledger import ACCOUNT_KINDS, balances as account_balances, default_account, owned_account
 
 
 BASE = Path(__file__).resolve().parent
@@ -57,14 +58,34 @@ CREATE TABLE IF NOT EXISTS profiles (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(user_id, name)
 );
+CREATE TABLE IF NOT EXISTS accounts (
+  id INTEGER PRIMARY KEY, profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  name TEXT NOT NULL COLLATE NOCASE, kind TEXT NOT NULL CHECK(kind IN ('current','savings','card')),
+  opening_balance_cents INTEGER NOT NULL DEFAULT 0
+    CHECK(opening_balance_cents BETWEEN -10000000000 AND 10000000000),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(profile_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_accounts_profile ON accounts(profile_id);
 CREATE TABLE IF NOT EXISTS transactions (
   id INTEGER PRIMARY KEY, profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id),
   kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
   amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
   category TEXT NOT NULL, occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_profile_date ON transactions(profile_id, occurred_on DESC);
+CREATE TABLE IF NOT EXISTS transfers (
+  id INTEGER PRIMARY KEY, profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  source_account_id INTEGER NOT NULL REFERENCES accounts(id),
+  target_account_id INTEGER NOT NULL REFERENCES accounts(id),
+  amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+  occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK(source_account_id != target_account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_transfers_profile_date ON transfers(profile_id, occurred_on DESC);
 CREATE TABLE IF NOT EXISTS statement_imports (
   id INTEGER PRIMARY KEY,
   profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -156,6 +177,20 @@ def close_db(_error):
 
 with app.app_context():
     db().executescript(SCHEMA)
+    transaction_columns = {row["name"] for row in db().execute("PRAGMA table_info(transactions)")}
+    if "account_id" not in transaction_columns:
+        db().execute("ALTER TABLE transactions ADD COLUMN account_id INTEGER REFERENCES accounts(id)")
+    for profile in db().execute("SELECT id FROM profiles").fetchall():
+        account = db().execute("SELECT id FROM accounts WHERE profile_id = ? ORDER BY id LIMIT 1",
+                               (profile["id"],)).fetchone()
+        if not account:
+            account_id = db().execute("""INSERT INTO accounts(profile_id, name, kind)
+                VALUES(?, 'Current account', 'current')""", (profile["id"],)).lastrowid
+        else:
+            account_id = default_account(db(), profile["id"])
+        db().execute("""UPDATE transactions SET account_id = ?
+            WHERE profile_id = ? AND account_id IS NULL""", (account_id, profile["id"]))
+    db().execute("CREATE INDEX IF NOT EXISTS idx_transactions_account_date ON transactions(account_id, occurred_on)")
     bill_columns = {row["name"] for row in db().execute("PRAGMA table_info(bills)")}
     if "frequency" not in bill_columns:
         db().execute("""ALTER TABLE bills ADD COLUMN frequency TEXT NOT NULL DEFAULT 'monthly'
@@ -226,6 +261,19 @@ def money(value, label, allow_zero=False):
     except (InvalidOperation, ValueError, TypeError):
         raise ValueError(f"{label} must be a valid amount with at most two decimals.")
     if cents < (0 if allow_zero else 1) or cents > 10_000_000_000:
+        raise ValueError(f"{label} is out of range.")
+    return cents
+
+
+def signed_money(value, label):
+    try:
+        amount = Decimal(str(value))
+        if not amount.is_finite() or amount.as_tuple().exponent < -2:
+            raise ValueError
+        cents = int(amount * 100)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError(f"{label} must have at most two decimals.")
+    if abs(cents) > 10_000_000_000:
         raise ValueError(f"{label} is out of range.")
     return cents
 
@@ -416,6 +464,8 @@ def register():
         user_id = cursor.lastrowid
         profile_id = db().execute("INSERT INTO profiles(user_id, name, currency) VALUES(?, 'Personal', 'GBP')",
                                   (user_id,)).lastrowid
+        db().execute("""INSERT INTO accounts(profile_id, name, kind)
+            VALUES(?, 'Current account', 'current')""", (profile_id,))
         db().commit()
     except sqlite3.IntegrityError:
         db().rollback()
@@ -498,6 +548,8 @@ def add_profile():
             raise ValueError("An account can have up to 10 profiles.")
         cursor = db().execute("INSERT INTO profiles(user_id, name, currency) VALUES(?, ?, ?)",
                               (session["user_id"], name, currency))
+        db().execute("""INSERT INTO accounts(profile_id, name, kind)
+            VALUES(?, 'Current account', 'current')""", (cursor.lastrowid,))
         db().commit()
         session["profile_id"] = cursor.lastrowid
         return jsonify(id=cursor.lastrowid), 201
@@ -530,6 +582,134 @@ def delete_profile(profile_id):
     if session.get("profile_id") == profile_id:
         session.pop("profile_id", None)
         current_profile()
+    return jsonify(ok=True)
+
+
+def account_fields(data):
+    name = clean_text(data.get("name"), "Account name", 40)
+    kind = data.get("kind")
+    if kind not in ACCOUNT_KINDS:
+        raise ValueError("Choose Current, Savings, or Card account.")
+    opening = signed_money(data.get("opening_balance", 0), "Opening balance")
+    return name, kind, opening
+
+
+@app.get("/api/accounts")
+def list_accounts():
+    profile_id = current_profile()["id"]
+    return jsonify(accounts=account_balances(db(), profile_id),
+                   balance_as_of=date.today().isoformat())
+
+
+@app.post("/api/accounts")
+def add_account():
+    try:
+        profile_id = current_profile()["id"]
+        fields = account_fields(payload())
+        if db().execute("SELECT COUNT(*) FROM accounts WHERE profile_id = ?", (profile_id,)).fetchone()[0] >= 20:
+            raise ValueError("A profile can have up to 20 accounts.")
+        cursor = db().execute("""INSERT INTO accounts(profile_id, name, kind,
+            opening_balance_cents) VALUES(?, ?, ?, ?)""", (profile_id, *fields))
+        db().commit()
+        return jsonify(id=cursor.lastrowid), 201
+    except sqlite3.IntegrityError:
+        db().rollback()
+        return fail("An account with that name already exists in this profile.", 409)
+    except ValueError as error:
+        return fail(str(error))
+
+
+@app.put("/api/accounts/<int:item_id>")
+def update_account(item_id):
+    try:
+        fields = account_fields(payload())
+        cursor = db().execute("""UPDATE accounts SET name=?, kind=?, opening_balance_cents=?
+            WHERE id=? AND profile_id=?""", (*fields, item_id, current_profile()["id"]))
+        if not cursor.rowcount:
+            return fail("Account not found.", 404)
+        db().commit()
+        return jsonify(ok=True)
+    except sqlite3.IntegrityError:
+        db().rollback()
+        return fail("An account with that name already exists in this profile.", 409)
+    except ValueError as error:
+        return fail(str(error))
+
+
+@app.delete("/api/accounts/<int:item_id>")
+def delete_account(item_id):
+    profile_id = current_profile()["id"]
+    if not db().execute("SELECT 1 FROM accounts WHERE id=? AND profile_id=?",
+                        (item_id, profile_id)).fetchone():
+        return fail("Account not found.", 404)
+    if db().execute("SELECT COUNT(*) FROM accounts WHERE profile_id=?",
+                    (profile_id,)).fetchone()[0] <= 1:
+        return fail("Keep at least one account in the profile.")
+    if db().execute("SELECT 1 FROM transactions WHERE account_id=? LIMIT 1",
+                    (item_id,)).fetchone() or db().execute("""SELECT 1 FROM transfers
+                    WHERE source_account_id=? OR target_account_id=? LIMIT 1""",
+                    (item_id, item_id)).fetchone():
+        return fail("This account has transactions or transfers. Move or delete those entries before deleting it.")
+    try:
+        db().execute("DELETE FROM accounts WHERE id=? AND profile_id=?", (item_id, profile_id))
+        db().commit()
+        return jsonify(ok=True)
+    except sqlite3.IntegrityError:
+        db().rollback()
+        return fail("This account is still used by ledger activity.")
+
+
+def transfer_fields(data, profile_id):
+    source = owned_account(db(), profile_id, data.get("source_account_id"))
+    target = owned_account(db(), profile_id, data.get("target_account_id"))
+    if source == target:
+        raise ValueError("Choose two different accounts for a transfer.")
+    occurred_on = iso_date(data.get("occurred_on"), "Transfer date")
+    if occurred_on > date.today().isoformat():
+        raise ValueError("Transfers are for money already moved. Choose today or earlier.")
+    note = data.get("note", "")
+    if not isinstance(note, str) or len(note.strip()) > 200:
+        raise ValueError("Transfer note must be at most 200 characters.")
+    return source, target, money(data.get("amount"), "Transfer amount"), occurred_on, note.strip()
+
+
+@app.post("/api/transfers")
+def add_transfer():
+    try:
+        profile_id = current_profile()["id"]
+        fields = transfer_fields(payload(), profile_id)
+        cursor = db().execute("""INSERT INTO transfers(profile_id, source_account_id,
+            target_account_id, amount_cents, occurred_on, note) VALUES(?, ?, ?, ?, ?, ?)""",
+            (profile_id, *fields))
+        db().commit()
+        return jsonify(id=cursor.lastrowid), 201
+    except ValueError as error:
+        return fail(str(error))
+
+
+@app.put("/api/transfers/<int:item_id>")
+def update_transfer(item_id):
+    try:
+        profile_id = current_profile()["id"]
+        fields = transfer_fields(payload(), profile_id)
+        cursor = db().execute("""UPDATE transfers SET source_account_id=?, target_account_id=?,
+            amount_cents=?, occurred_on=?, note=? WHERE id=? AND profile_id=?""",
+            (*fields, item_id, profile_id))
+        if not cursor.rowcount:
+            return fail("Transfer not found.", 404)
+        db().commit()
+        return jsonify(ok=True)
+    except ValueError as error:
+        return fail(str(error))
+
+
+@app.delete("/api/transfers/<int:item_id>")
+def delete_transfer(item_id):
+    cursor = db().execute("DELETE FROM transfers WHERE id=? AND profile_id=?",
+                          (item_id, current_profile()["id"]))
+    if not cursor.rowcount:
+        return fail("Transfer not found.", 404)
+    db().commit()
     return jsonify(ok=True)
 
 
@@ -568,7 +748,7 @@ def data():
             AND transactions.occurred_on <= ?
             GROUP BY transactions.category COLLATE NOCASE ORDER BY amount_cents DESC""",
             (profile["id"], lower, upper, today))]
-    recent = [dict(row) for row in conn.execute("""SELECT id, kind, amount_cents, category,
+    recent = [dict(row) for row in conn.execute("""SELECT id, account_id, kind, amount_cents, category,
             occurred_on, note FROM transactions WHERE profile_id = ? AND occurred_on >= ?
             AND occurred_on < ? AND occurred_on <= ?
             ORDER BY occurred_on DESC, id DESC LIMIT 5""",
@@ -609,12 +789,18 @@ def data():
     monthly_bills_cents += monthly_commuting_cents
     categories = [row["name"] for row in conn.execute(
         "SELECT name FROM categories WHERE profile_id = ? ORDER BY name COLLATE NOCASE", (profile["id"],))]
+    accounts = account_balances(conn, profile["id"], today)
+    transfers = [dict(row) for row in conn.execute("""SELECT id, source_account_id,
+        target_account_id, amount_cents, occurred_on, note FROM transfers WHERE profile_id = ?
+        AND occurred_on >= ? AND occurred_on < ? ORDER BY occurred_on DESC, id DESC LIMIT 100""",
+        (profile["id"], lower, upper))]
     return jsonify(profile=dict(profile), month=month, monthly_totals=monthly_totals,
                    chart=list(chart_totals.values()), spending=spending, recent=recent,
                    budgets=budgets, goals=goals, bills=bills, bill_status=bill_status,
                    commutes=commutes,
                    monthly_commuting_cents=monthly_commuting_cents,
-                   monthly_bills_cents=monthly_bills_cents, categories=categories)
+                   monthly_bills_cents=monthly_bills_cents, categories=categories,
+                   accounts=accounts, transfers=transfers, balance_as_of=today)
 
 
 @app.get("/api/transactions")
@@ -624,6 +810,7 @@ def list_transactions():
         return fail("Create a profile first.", 404)
     kind = request.args.get("kind", "all")
     search = request.args.get("search", "").strip()
+    account_id = request.args.get("account_id", "")
     try:
         offset = int(request.args.get("offset", "0"))
     except ValueError:
@@ -632,6 +819,13 @@ def list_transactions():
         return fail("Invalid transaction filter.")
     conditions = ["profile_id = ?"]
     values = [profile["id"]]
+    if account_id:
+        try:
+            selected_account = owned_account(db(), profile["id"], account_id)
+        except ValueError:
+            return fail("Invalid account filter.")
+        conditions.append("account_id = ?")
+        values.append(selected_account)
     if kind != "all":
         conditions.append("kind = ?")
         values.append(kind)
@@ -641,7 +835,7 @@ def list_transactions():
         values.extend([f"%{escaped}%"] * 3)
     where = " AND ".join(conditions)
     total = db().execute(f"SELECT COUNT(*) FROM transactions WHERE {where}", values).fetchone()[0]
-    rows = [dict(row) for row in db().execute(f"""SELECT id, kind, amount_cents, category,
+    rows = [dict(row) for row in db().execute(f"""SELECT id, account_id, kind, amount_cents, category,
         occurred_on, note FROM transactions WHERE {where}
         ORDER BY occurred_on DESC, id DESC LIMIT 50 OFFSET ?""", (*values, offset))]
     return jsonify(transactions=rows, total=total, offset=offset, limit=50)
@@ -666,13 +860,16 @@ def transaction_fields(data):
 @app.post("/api/transactions")
 def add_transaction():
     try:
-        fields = transaction_fields(payload())
+        data = payload()
+        fields = transaction_fields(data)
         profile_id = current_profile()["id"]
+        account_id = owned_account(db(), profile_id, data.get("account_id"), optional_default=True)
         category = remember_category(profile_id, fields[2])
         fields = (fields[0], fields[1], category, fields[3], fields[4])
         cursor = db().execute(
-            "INSERT INTO transactions(profile_id, kind, amount_cents, category, occurred_on, note) VALUES(?, ?, ?, ?, ?, ?)",
-            (profile_id, *fields))
+            """INSERT INTO transactions(profile_id, account_id, kind, amount_cents,
+                category, occurred_on, note) VALUES(?, ?, ?, ?, ?, ?, ?)""",
+            (profile_id, account_id, *fields))
         db().commit()
         return jsonify(id=cursor.lastrowid), 201
     except ValueError as error:
@@ -682,11 +879,18 @@ def add_transaction():
 @app.put("/api/transactions/<int:item_id>")
 def update_transaction(item_id):
     try:
-        fields = transaction_fields(payload())
+        data = payload()
+        fields = transaction_fields(data)
         profile_id = current_profile()["id"]
+        existing = db().execute("SELECT account_id FROM transactions WHERE id=? AND profile_id=?",
+                                (item_id, profile_id)).fetchone()
+        if not existing:
+            return fail("Transaction not found.", 404)
+        account_id = owned_account(db(), profile_id, data.get("account_id", existing["account_id"]))
         cursor = db().execute(
-            "UPDATE transactions SET kind=?, amount_cents=?, category=?, occurred_on=?, note=? WHERE id=? AND profile_id=?",
-            (*fields, item_id, profile_id))
+            """UPDATE transactions SET kind=?, amount_cents=?, category=?, occurred_on=?,
+                note=?, account_id=? WHERE id=? AND profile_id=?""",
+            (*fields, account_id, item_id, profile_id))
         if not cursor.rowcount:
             return fail("Transaction not found.", 404)
         category = remember_category(profile_id, fields[2])
@@ -785,6 +989,7 @@ def save_statement():
         profile_id = current_profile()["id"]
         if isinstance(data.get("profile_id"), bool) or data.get("profile_id") != profile_id:
             raise ValueError("The active profile changed since the statement preview. Review the file again.")
+        account_id = owned_account(db(), profile_id, data.get("account_id"), optional_default=True)
         _, _, source_rows, _, file_hash = statement_context(data)
         filename = clean_text(data.get("filename"), "Statement filename", 120)
         selected = data.get("rows")
@@ -830,9 +1035,9 @@ def save_statement():
             batch_id = cursor.lastrowid
             for (row_number, fields, _), candidate in zip(requested, provisional):
                 category = remember_category(profile_id, candidate["category"])
-                tx = conn.execute("""INSERT INTO transactions(profile_id, kind, amount_cents,
-                    category, occurred_on, note) VALUES(?, ?, ?, ?, ?, ?)""",
-                    (profile_id, fields[0], fields[1], category, fields[3], fields[4]))
+                tx = conn.execute("""INSERT INTO transactions(profile_id, account_id, kind,
+                    amount_cents, category, occurred_on, note) VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                    (profile_id, account_id, fields[0], fields[1], category, fields[3], fields[4]))
                 conn.execute("""INSERT INTO statement_import_items(batch_id, profile_id,
                     file_hash, source_row, transaction_id) VALUES(?, ?, ?, ?, ?)""",
                     (batch_id, profile_id, file_hash, row_number, tx.lastrowid))
@@ -1050,10 +1255,12 @@ def import_bill_payments():
             requests.append((item["bill_id"], due_on))
         if len(set(requests)) != len(requests):
             raise ValueError("Choose each bill payment only once.")
+        profile_id = current_profile()["id"]
+        account_id = owned_account(db(), profile_id, data.get("account_id"), optional_default=True)
         conn = db()
         conn.execute("BEGIN IMMEDIATE")
         try:
-            candidates, _ = bill_payment_candidates(current_profile()["id"], month)
+            candidates, _ = bill_payment_candidates(profile_id, month)
             available = {(item["bill_id"], item["due_on"]): item for item in candidates}
             if any(key not in available for key in requests):
                 raise ValueError("A selected bill payment is no longer available. Refresh the preview.")
@@ -1065,9 +1272,10 @@ def import_bill_payments():
                     skipped_count += 1
                     continue
                 item = available[key]
-                cursor = conn.execute("""INSERT INTO transactions(profile_id, kind,
-                    amount_cents, category, occurred_on, note) VALUES(?, 'expense', ?, ?, ?, ?)""",
-                    (current_profile()["id"], item["amount_cents"], item["category"],
+                cursor = conn.execute("""INSERT INTO transactions(profile_id, account_id, kind,
+                    amount_cents, category, occurred_on, note)
+                    VALUES(?, ?, 'expense', ?, ?, ?, ?)""",
+                    (profile_id, account_id, item["amount_cents"], item["category"],
                      due_on, item["name"]))
                 conn.execute("INSERT INTO bill_imports(bill_id, due_on, transaction_id) VALUES(?, ?, ?)",
                              (bill_id, due_on, cursor.lastrowid))

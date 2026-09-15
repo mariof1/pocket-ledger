@@ -16,7 +16,7 @@ The work is staged so each release is usable and can be checked against an isola
 - Detect exact and probable duplicates before saving. Let the user skip or edit rows and explicitly acknowledge a legitimate repeat; recheck on the server inside one atomic batch.
 - Keep import history and source-row links per profile, prevent importing the same source row again, and include history in account export/import.
 
-## Build 3 — accounts, balances, and transfers
+## Build 3 — accounts, balances, and transfers (implemented)
 
 - Add current, savings, and card accounts inside each profile, with opening balances and transaction ownership.
 - Represent transfers explicitly so moving money between owned accounts changes balances without inflating income or spending.
@@ -28,4 +28,4 @@ The work is staged so each release is usable and can be checked against an isola
 - Split the browser script into API/state, pages, forms, and calculators; organise CSS into tokens, components, and page styles.
 - Add focused checks for the new import and account flows, responsive layouts, and accessible form behaviour.
 
-Build 1 passed isolated server and mortgage-guide tests, a populated desktop review, a 390-pixel responsive check without horizontal overflow, live database integrity and record-count comparisons against a local backup, and an invalid-form review without saving test records. Build 2 passed isolated CSV parsing, duplicate/rollback/profile and export/import checks, the full regression suite, a live-data backup and integrity check, and a desktop and phone-width review using a test CSV without saving it to the live account. Builds 3 and 4 are planned work and will need their own data-model and interface review before release.
+Build 1 passed isolated server and mortgage-guide tests, a populated desktop review, a 390-pixel responsive check without horizontal overflow, live database integrity and record-count comparisons against a local backup, and an invalid-form review without saving test records. Build 2 passed isolated CSV parsing, duplicate/rollback/profile and export/import checks, the full regression suite, a live-data backup and integrity check, and a desktop and phone-width review using a test CSV without saving it to the live account. Build 3 passed isolated balances, transfer edits, account isolation, bill/CSV account selection, old/new export and import, legacy migration and deletion checks; the full regression suite; a live database backup and integrity check with preserved record counts; and a desktop and phone-width review. Build 4 is the next stage and needs its own migration and structure review.

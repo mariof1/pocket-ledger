@@ -160,6 +160,212 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 201, saved.json)
         self.assertEqual(self.client.get("/api/transactions").json["total"], 1)
 
+    def test_accounts_balance_transfers_and_profile_boundaries(self):
+        self.register("account-balances@example.com")
+        current = self.client.get("/api/accounts").json["accounts"][0]["id"]
+        savings = self.request("POST", "/api/accounts", {
+            "name": "Savings", "kind": "savings", "opening_balance": "100"
+        }).json["id"]
+        card = self.request("POST", "/api/accounts", {
+            "name": "Credit card", "kind": "card", "opening_balance": "-500"
+        }).json["id"]
+        today = date.today().isoformat()
+        for kind, amount, account_id in (("income", "1000", current),
+                                         ("expense", "200", current),
+                                         ("expense", "30", card)):
+            self.assertEqual(self.request("POST", "/api/transactions", {
+                "kind": kind, "amount": amount, "account_id": account_id,
+                "category": "Test", "occurred_on": today
+            }).status_code, 201)
+        transfer = self.request("POST", "/api/transfers", {
+            "source_account_id": current, "target_account_id": savings,
+            "amount": "250", "occurred_on": today, "note": "Set aside"
+        })
+        self.assertEqual(transfer.status_code, 201, transfer.json)
+        data = self.client.get(f"/api/data?month={today[:7]}").json
+        values = {item["id"]: item["balance_cents"] for item in data["accounts"]}
+        self.assertEqual(values, {current: 55000, savings: 35000, card: -53000})
+        self.assertEqual(sum(values.values()), 37000)
+        self.assertEqual(data["monthly_totals"], {"income": 100000, "expense": 23000})
+        self.assertEqual(len(data["transfers"]), 1)
+        self.assertEqual(self.client.get(f"/api/transactions?account_id={current}").json["total"], 2)
+        self.assertEqual(self.client.get(f"/api/transactions?account_id={card}&kind=expense").json["total"], 1)
+        self.assertEqual(self.client.get(f"/api/transactions?account_id={savings}").json["total"], 0)
+        changed = self.request("PUT", f"/api/transfers/{transfer.json['id']}", {
+            "source_account_id": current, "target_account_id": savings,
+            "amount": "100", "occurred_on": today, "note": "Adjusted"
+        })
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual({item["id"]: item["balance_cents"] for item in
+                          self.client.get("/api/accounts").json["accounts"]},
+                         {current: 70000, savings: 20000, card: -53000})
+        self.assertEqual(self.request("DELETE", f"/api/accounts/{current}").status_code, 400)
+        self.assertEqual(self.request("POST", "/api/transfers", {
+            "source_account_id": current, "target_account_id": current,
+            "amount": "5", "occurred_on": today
+        }).status_code, 400)
+        self.assertEqual(self.request("POST", "/api/profiles", {
+            "name": "Separate", "currency": "GBP"
+        }).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/transactions", {
+            "kind": "expense", "amount": "5", "account_id": current,
+            "category": "Test", "occurred_on": today
+        }).status_code, 400)
+        self.assertEqual(self.client.get(f"/api/transactions?account_id={current}").status_code, 400)
+        self.assertEqual(self.request("POST", "/api/transfers", {
+            "source_account_id": current,
+            "target_account_id": self.client.get("/api/accounts").json["accounts"][0]["id"],
+            "amount": "5", "occurred_on": today
+        }).status_code, 400)
+        self.assertEqual(len(self.client.get("/api/accounts").json["accounts"]), 1)
+
+    def test_account_export_v2_roundtrip_and_old_export_uses_default_account(self):
+        self.register("accounts-export@example.com")
+        today = date.today().isoformat()
+        source_current = self.client.get("/api/accounts").json["accounts"][0]["id"]
+        source_savings = self.request("POST", "/api/accounts", {
+            "name": "Reserve", "kind": "savings", "opening_balance": "50"
+        }).json["id"]
+        self.assertEqual(self.request("POST", "/api/transactions", {
+            "kind": "income", "amount": "100", "category": "Gift",
+            "account_id": source_savings, "occurred_on": today
+        }).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/transfers", {
+            "source_account_id": source_savings, "target_account_id": source_current,
+            "amount": "20", "occurred_on": today
+        }).status_code, 201)
+        document = self.client.get("/api/account/export").json
+        self.assertEqual(document["version"], 2)
+        self.assertEqual((len(document["profiles"][0]["accounts"]),
+                          len(document["profiles"][0]["transfers"])), (2, 1))
+
+        def fresh_destination(email, export):
+            destination = app.test_client()
+            token = destination.get("/api/bootstrap").json["csrf"]
+            self.assertEqual(destination.post("/api/register", json={
+                "email": email, "password": "strong destination password 123"
+            }, headers={"X-CSRF-Token": token}).status_code, 200)
+            token = destination.get("/api/bootstrap").json["csrf"]
+            restored = destination.post("/api/account/import", json=export,
+                                        headers={"X-CSRF-Token": token})
+            self.assertEqual(restored.status_code, 201, restored.json)
+            return destination, restored.json
+
+        new_user, result = fresh_destination("accounts-restored@example.com", document)
+        self.assertEqual((result["counts"]["accounts"], result["counts"]["transfers"]), (2, 1))
+        self.assertEqual(sorted(item["balance_cents"] for item in
+                                new_user.get("/api/accounts").json["accounts"]), [2000, 13000])
+        restored_export = new_user.get("/api/account/export").json
+        self.assertEqual(restored_export["profiles"][0]["transactions"][0]["account_id"],
+                         next(item["id"] for item in restored_export["profiles"][0]["accounts"]
+                              if item["name"] == "Reserve"))
+        old = copy.deepcopy(document)
+        old["version"] = 1
+        for profile in old["profiles"]:
+            profile.pop("accounts")
+            profile.pop("transfers")
+            for tx in profile["transactions"]:
+                tx.pop("account_id")
+        old_user, old_result = fresh_destination("accounts-old-export@example.com", old)
+        self.assertEqual((old_result["counts"]["accounts"], old_result["counts"]["transfers"]),
+                         (1, 0))
+        self.assertEqual(old_user.get("/api/transactions").json["total"], 1)
+        self.assertEqual(old_user.get("/api/accounts").json["accounts"][0]["balance_cents"], 10000)
+
+    def test_existing_profile_transactions_migrate_once_to_current_account(self):
+        with tempfile.TemporaryDirectory() as legacy_dir:
+            path = Path(legacy_dir) / "ledger.sqlite3"
+            conn = sqlite3.connect(path)
+            conn.executescript("""
+                CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT);
+                CREATE TABLE profiles (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, currency TEXT);
+                CREATE TABLE transactions (id INTEGER PRIMARY KEY, profile_id INTEGER,
+                    kind TEXT, amount_cents INTEGER, category TEXT, occurred_on TEXT,
+                    note TEXT, created_at TEXT);
+                INSERT INTO users VALUES (1, 'migration@example.com', 'unused');
+                INSERT INTO profiles VALUES (1, 1, 'Personal', 'GBP');
+                INSERT INTO transactions VALUES (1, 1, 'expense', 2500,
+                    'Groceries', '2026-09-01', 'Food', '2026-09-01 12:00:00');
+            """)
+            conn.close()
+            environment = {**os.environ, "LEDGER_INSTANCE": legacy_dir}
+            for _ in range(2):
+                process = subprocess.run([sys.executable, "-c", "import app"],
+                                         cwd=Path(__file__).resolve().parent,
+                                         env=environment, capture_output=True, text=True)
+                self.assertEqual(process.returncode, 0, process.stderr)
+            conn = sqlite3.connect(path)
+            account = conn.execute("SELECT id, name, opening_balance_cents FROM accounts").fetchall()
+            self.assertEqual(len(account), 1)
+            self.assertEqual(account[0][1:], ("Current account", 0))
+            self.assertEqual(conn.execute("SELECT account_id FROM transactions WHERE id=1").fetchone()[0],
+                             account[0][0])
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+            conn.close()
+
+    def test_bill_and_statement_imports_post_to_selected_account(self):
+        self.register("import-account-choice@example.com")
+        today = date.today().isoformat()
+        current = self.client.get("/api/accounts").json["accounts"][0]["id"]
+        savings = self.request("POST", "/api/accounts", {
+            "name": "Payments", "kind": "savings", "opening_balance": "100"
+        }).json["id"]
+        bill = self.request("POST", "/api/bills", {
+            "name": "Membership", "category": "Health", "amount": "10",
+            "day_of_month": date.today().day
+        }).json["id"]
+        imported = self.request("POST", "/api/bills/import", {
+            "month": today[:7], "account_id": savings,
+            "items": [{"bill_id": bill, "due_on": today}]
+        })
+        self.assertEqual(imported.status_code, 201, imported.json)
+        csv_text = f"Date,Description,Amount\n{today},Statement purchase,-3.00\n"
+        preview = self.request("POST", "/api/statements/preview", {
+            "text": csv_text, "mapping": {"date": 0, "description": 1, "amount": 2},
+            "date_order": "dmy", "decimal_mark": "dot", "positive_expense": False
+        }).json
+        item = preview["rows"][0]
+        statement = self.request("POST", "/api/statements/save", {
+            "text": csv_text, "filename": "payments.csv", "profile_id": preview["profile_id"],
+            "account_id": current, "rows": [{
+                "row_number": item["row_number"], "kind": item["kind"],
+                "amount": item["amount"], "category": item["category"],
+                "occurred_on": item["occurred_on"], "note": item["note"],
+                "allow_duplicate": False
+            }]
+        })
+        self.assertEqual(statement.status_code, 201, statement.json)
+        self.assertEqual({row["note"]: row["account_id"] for row in
+                          self.client.get("/api/transactions").json["transactions"]},
+                         {"Membership": savings, "Statement purchase": current})
+        self.assertEqual({item["id"]: item["balance_cents"] for item in
+                          self.client.get("/api/accounts").json["accounts"]},
+                         {current: -300, savings: 9000})
+
+    def test_profile_deletion_cascades_owned_accounts_and_transfers(self):
+        self.register("profile-account-delete@example.com")
+        original_profile = self.client.get("/api/bootstrap").json["profile_id"]
+        current = self.client.get("/api/accounts").json["accounts"][0]["id"]
+        savings = self.request("POST", "/api/accounts", {
+            "name": "Reserve", "kind": "savings", "opening_balance": "0"
+        }).json["id"]
+        today = date.today().isoformat()
+        self.assertEqual(self.request("POST", "/api/transactions", {
+            "kind": "income", "amount": "100", "category": "Salary",
+            "account_id": current, "occurred_on": today
+        }).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/transfers", {
+            "source_account_id": current, "target_account_id": savings,
+            "amount": "20", "occurred_on": today
+        }).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/profiles", {
+            "name": "Other", "currency": "GBP"
+        }).status_code, 201)
+        self.assertEqual(self.request("DELETE", f"/api/profiles/{original_profile}").status_code, 200)
+        self.assertEqual(len(self.client.get("/api/accounts").json["accounts"]), 1)
+        with app.app_context():
+            self.assertEqual(db().execute("PRAGMA foreign_key_check").fetchall(), [])
+
     def test_csrf_and_login_required(self):
         self.assertEqual(self.client.post("/api/register", json={}).status_code, 403)
         self.assertEqual(self.client.get("/api/data").status_code, 401)
@@ -208,7 +414,7 @@ class LedgerTests(unittest.TestCase):
         self.assertIn("attachment", source.headers["Content-Disposition"])
         document = source.json
         self.assertEqual((document["format"], document["version"], len(document["profiles"])),
-                         ("pocket-ledger-account", 1, 2))
+                         ("pocket-ledger-account", 2, 2))
         self.assertNotIn("password_hash", str(document))
         self.assertNotIn("transfer-source@example.com", str(document))
         self.assertEqual(len(document["profiles"][0]["bill_imports"]), 1)
@@ -234,13 +440,13 @@ class LedgerTests(unittest.TestCase):
         for before, after in zip(document["profiles"], restored["profiles"]):
             self.assertEqual((before["name"], before["currency"]),
                              (after["name"], after["currency"]))
-            for resource in ("transactions", "budgets", "goals", "bills",
-                             "commutes", "categories", "bill_imports"):
+            for resource in ("accounts", "transactions", "budgets", "goals", "bills",
+                             "commutes", "categories", "bill_imports", "transfers"):
                 self.assertEqual(len(before[resource]), len(after[resource]), resource)
             self.assertEqual(
-                [{key: value for key, value in tx.items() if key != "id"}
+                [{key: value for key, value in tx.items() if key not in ("id", "account_id")}
                  for tx in before["transactions"]],
-                [{key: value for key, value in tx.items() if key != "id"}
+                [{key: value for key, value in tx.items() if key not in ("id", "account_id")}
                  for tx in after["transactions"]])
         self.assertEqual(destination.post("/api/account/import", json=document,
                                          headers={"X-CSRF-Token": csrf}).status_code, 400)
@@ -394,10 +600,11 @@ class LedgerTests(unittest.TestCase):
         # A future-dated record saved by an older app version remains editable,
         # but does not inflate cash flow, chart, spending categories or recent activity.
         profile_id = self.client.get("/api/bootstrap").json["profile_id"]
+        account_id = self.client.get("/api/accounts").json["accounts"][0]["id"]
         with app.app_context():
-            db().execute("""INSERT INTO transactions(profile_id, kind, amount_cents,
-                category, occurred_on, note) VALUES(?, 'expense', 2000, 'Housing', ?, '')""",
-                (profile_id, tomorrow))
+            db().execute("""INSERT INTO transactions(profile_id, account_id, kind, amount_cents,
+                category, occurred_on, note) VALUES(?, ?, 'expense', 2000, 'Housing', ?, '')""",
+                (profile_id, account_id, tomorrow))
             db().commit()
         data = self.client.get(f"/api/data?month={tomorrow[:7]}").json
         self.assertEqual((data["monthly_totals"]["expense"], data["spending"], data["recent"]),

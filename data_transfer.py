@@ -8,9 +8,10 @@ from commute import REGIONS, parse_dates
 
 
 FORMAT = "pocket-ledger-account"
-VERSION = 1
+VERSION = 2
 TABLE_FIELDS = {
-    "transactions": ("id", "kind", "amount_cents", "category", "occurred_on", "note", "created_at"),
+    "accounts": ("id", "name", "kind", "opening_balance_cents", "created_at"),
+    "transactions": ("id", "account_id", "kind", "amount_cents", "category", "occurred_on", "note", "created_at"),
     "budgets": ("month", "category", "limit_cents"),
     "goals": ("name", "target_cents", "saved_cents", "monthly_cents", "target_date", "created_at"),
     "bills": ("id", "name", "category", "amount_cents", "day_of_month", "frequency", "first_due_on"),
@@ -52,6 +53,9 @@ def export_account(conn, user_id):
                WHERE statement_import_items.profile_id = ? AND transactions.profile_id = ?
                ORDER BY statement_import_items.batch_id, statement_import_items.source_row""",
             (profile["id"], profile["id"]))]
+        item["transfers"] = [dict(row) for row in conn.execute("""SELECT id,
+            source_account_id, target_account_id, amount_cents, occurred_on, note, created_at
+            FROM transfers WHERE profile_id = ? ORDER BY id""", (profile["id"],))]
         profiles.append(item)
     return {"format": FORMAT, "version": VERSION, "profiles": profiles}
 
@@ -78,6 +82,12 @@ def text(value, label, maximum, optional=False):
 
 def integer(value, label, maximum=10_000_000_000, zero=False):
     if isinstance(value, bool) or not isinstance(value, int) or value < (0 if zero else 1) or value > maximum:
+        raise ValueError(f"{label} is out of range.")
+    return value
+
+
+def signed_integer(value, label, maximum=10_000_000_000):
+    if isinstance(value, bool) or not isinstance(value, int) or abs(value) > maximum:
         raise ValueError(f"{label} is out of range.")
     return value
 
@@ -118,19 +128,29 @@ def destination_profile(conn, user_id):
         raise ValueError("Import requires a new account with one empty profile.")
     profile_id = profiles[0]["id"]
     for table in TABLE_FIELDS:
+        if table == "accounts":
+            continue
         if conn.execute(f"SELECT 1 FROM {table} WHERE profile_id = ? LIMIT 1",
                         (profile_id,)).fetchone():
             raise ValueError("Import requires a new account with one empty profile.")
     if conn.execute("SELECT 1 FROM statement_imports WHERE profile_id = ? LIMIT 1",
                     (profile_id,)).fetchone():
         raise ValueError("Import requires a new account with one empty profile.")
+    if conn.execute("SELECT 1 FROM transfers WHERE profile_id = ? LIMIT 1",
+                    (profile_id,)).fetchone():
+        raise ValueError("Import requires a new account with one empty profile.")
+    accounts = conn.execute("""SELECT kind, opening_balance_cents FROM accounts
+        WHERE profile_id = ?""", (profile_id,)).fetchall()
+    if len(accounts) != 1 or accounts[0]["kind"] != "current" or accounts[0]["opening_balance_cents"]:
+        raise ValueError("Import requires a new account with one empty profile.")
     return profile_id
 
 
 def import_account(conn, user_id, document):
     record(document, "Export")
-    if document.get("format") != FORMAT or type(document.get("version")) is not int or document["version"] != VERSION:
-        raise ValueError("Choose a Pocket Ledger account export (version 1).")
+    version = document.get("version")
+    if document.get("format") != FORMAT or type(version) is not int or version not in (1, 2):
+        raise ValueError("Choose a Pocket Ledger account export (version 1 or 2).")
     profiles = records(document.get("profiles"), "Profiles")
     if not 1 <= len(profiles) <= 10:
         raise ValueError("An export must contain between 1 and 10 profiles.")
@@ -138,7 +158,7 @@ def import_account(conn, user_id, document):
     try:
         first_profile_id = destination_profile(conn, user_id)
         names = set()
-        counts = {table: 0 for table in (*TABLE_FIELDS, "bill_imports",
+        counts = {table: 0 for table in (*TABLE_FIELDS, "bill_imports", "transfers",
                                          "statement_imports", "statement_import_items")}
         for index, raw in enumerate(profiles):
             profile = record(raw, "Profile")
@@ -152,13 +172,41 @@ def import_account(conn, user_id, document):
             created_at = timestamp(profile.get("created_at"))
             if index == 0:
                 profile_id = first_profile_id
+                conn.execute("DELETE FROM accounts WHERE profile_id = ?", (profile_id,))
                 conn.execute("UPDATE profiles SET name=?, currency=?, created_at=? WHERE id=?",
                              (name, currency, created_at, profile_id))
             else:
                 profile_id = conn.execute(
                     "INSERT INTO profiles(user_id, name, currency, created_at) VALUES(?, ?, ?, ?)",
                     (user_id, name, currency, created_at)).lastrowid
-            transaction_ids, bill_ids = {}, {}
+            transaction_ids, bill_ids, account_ids = {}, {}, {}
+            if version == 2:
+                source_accounts = records(profile.get("accounts"), "Accounts")
+                if not 1 <= len(source_accounts) <= 20:
+                    raise ValueError("A profile needs between 1 and 20 exported accounts.")
+                account_names = set()
+                for row in source_accounts:
+                    item = record(row, "Account")
+                    old_id = integer(item.get("id"), "Account reference")
+                    if old_id in account_ids:
+                        raise ValueError("Export account references must be unique.")
+                    account_name = text(item.get("name"), "Account name", 40).strip()
+                    if account_name.casefold() in account_names:
+                        raise ValueError("Account names must be unique in a profile.")
+                    account_names.add(account_name.casefold())
+                    kind = item.get("kind")
+                    if kind not in ("current", "savings", "card"):
+                        raise ValueError("Export account type is invalid.")
+                    account_ids[old_id] = conn.execute("""INSERT INTO accounts(profile_id, name,
+                        kind, opening_balance_cents, created_at) VALUES(?, ?, ?, ?, ?)""",
+                        (profile_id, account_name, kind,
+                         signed_integer(item.get("opening_balance_cents"), "Opening balance"),
+                         timestamp(item.get("created_at")))).lastrowid
+                    counts["accounts"] += 1
+            else:
+                old_default = conn.execute("""INSERT INTO accounts(profile_id, name, kind)
+                    VALUES(?, 'Current account', 'current')""", (profile_id,)).lastrowid
+                counts["accounts"] += 1
             for row in records(profile.get("transactions"), "Transactions"):
                 item = record(row, "Transaction")
                 old_id = integer(item.get("id"), "Transaction reference")
@@ -174,10 +222,17 @@ def import_account(conn, user_id, document):
                 if note is None:
                     raise ValueError("Transaction note must be text.")
                 created_at = timestamp(item.get("created_at"))
+                if version == 2:
+                    account_id = account_ids.get(integer(item.get("account_id"), "Transaction account reference"))
+                    if account_id is None:
+                        raise ValueError("A transaction refers to a missing account.")
+                else:
+                    account_id = old_default
                 transaction_ids[old_id] = conn.execute(
-                    """INSERT INTO transactions(profile_id, kind, amount_cents, category,
-                       occurred_on, note, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)""",
-                    (profile_id, kind, amount, category, occurred_on, note, created_at)).lastrowid
+                    """INSERT INTO transactions(profile_id, account_id, kind, amount_cents,
+                       category, occurred_on, note, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (profile_id, account_id, kind, amount, category, occurred_on, note,
+                     created_at)).lastrowid
                 counts["transactions"] += 1
             for row in records(profile.get("budgets"), "Budgets"):
                 item = record(row, "Budget")
@@ -312,6 +367,30 @@ def import_account(conn, user_id, document):
                     file_hash, source_row, transaction_id) VALUES(?, ?, ?, ?, ?)""",
                     (batch_id, profile_id, file_hash, source_row, transaction_id))
                 counts["statement_import_items"] += 1
+            if version == 2:
+                transfer_ids = set()
+                for row in records(profile.get("transfers"), "Transfers"):
+                    item = record(row, "Transfer")
+                    old_id = integer(item.get("id"), "Transfer reference")
+                    if old_id in transfer_ids:
+                        raise ValueError("Export transfer references must be unique.")
+                    transfer_ids.add(old_id)
+                    source = account_ids.get(integer(item.get("source_account_id"),
+                                                     "Transfer source reference"))
+                    target = account_ids.get(integer(item.get("target_account_id"),
+                                                     "Transfer destination reference"))
+                    if source is None or target is None or source == target:
+                        raise ValueError("A transfer needs two accounts in its own profile.")
+                    note = text(item.get("note"), "Transfer note", 200, optional=True)
+                    if note is None:
+                        raise ValueError("Transfer note must be text.")
+                    conn.execute("""INSERT INTO transfers(profile_id, source_account_id,
+                        target_account_id, amount_cents, occurred_on, note, created_at)
+                        VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                        (profile_id, source, target, integer(item.get("amount_cents"),
+                         "Transfer amount"), iso_date(item.get("occurred_on"), "Transfer date"),
+                         note, timestamp(item.get("created_at"))))
+                    counts["transfers"] += 1
         conn.commit()
         return {"profiles": len(profiles), "counts": counts, "profile_id": first_profile_id}
     except Exception:
