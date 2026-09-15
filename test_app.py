@@ -17,6 +17,7 @@ os.environ["LEDGER_INSTANCE"] = TEST_DIR.name
 from app import app, db, reset_account_password  # noqa: E402
 from bill_import import due_dates  # noqa: E402
 from bill_status import month_bill_status  # noqa: E402
+from statement_import import csv_table, parse_amount, parse_date, statement_rows, suggest_mapping  # noqa: E402
 import commute as commute_module  # noqa: E402
 
 
@@ -34,6 +35,130 @@ class LedgerTests(unittest.TestCase):
                                 {"email": email, "password": "a strong password 123"})
         self.assertEqual(response.status_code, 200)
         self.csrf = self.client.get("/api/bootstrap").json["csrf"]
+
+    def test_statement_csv_parser_handles_bank_columns_dates_and_debit_credit(self):
+        today = date.today().strftime("%d/%m/%Y")
+        headers, rows, delimiter = csv_table(
+            f'Booking Date;Narrative;Debit;Credit\n{today};"Bus; ticket";2,50;0,00\n'
+            f'{today};Salary;0,00;1.234,56\n')
+        self.assertEqual(delimiter, ";")
+        mapping = suggest_mapping(headers)
+        self.assertEqual(mapping, {"date": 0, "description": 1, "debit": 2, "credit": 3})
+        parsed = statement_rows(headers, rows, mapping, "dmy", "comma", False)
+        self.assertEqual([(item["kind"], item["amount_cents"], item["note"])
+                          for item in parsed],
+                         [("expense", 250, "Bus; ticket"), ("income", 123456, "Salary")])
+        self.assertIsNone(parse_amount("0,00", "comma"))
+        self.assertEqual(parse_date(today, "dmy"), date.today().isoformat())
+
+    def test_statement_review_duplicates_atomic_save_and_profile_history(self):
+        self.register("statement-review@example.com")
+        today = date.today().strftime("%d/%m/%Y")
+        csv_text = (f'Date,Description,Amount\n{today},Cafe,-4.25\n'
+                    f'{today},Cafe,-4.25\n{today},Pay,2000.00\n')
+        inspected = self.request("POST", "/api/statements/inspect", {"text": csv_text})
+        self.assertEqual(inspected.status_code, 200, inspected.json)
+        self.assertEqual(inspected.json["mapping"],
+                         {"date": 0, "description": 1, "amount": 2})
+        preview = self.request("POST", "/api/statements/preview", {
+            "text": csv_text, "mapping": inspected.json["mapping"],
+            "date_order": "dmy", "decimal_mark": "dot", "positive_expense": False
+        })
+        self.assertEqual(preview.status_code, 200, preview.json)
+        profile_id = preview.json["profile_id"]
+        items = preview.json["rows"]
+        self.assertEqual([item.get("duplicate") for item in items], [None, "exact", None])
+        self.assertEqual([item["include"] for item in items], [True, False, True])
+        selected = [{"row_number": item["row_number"], "kind": item["kind"],
+                     "amount": item["amount"], "category": item["category"],
+                     "occurred_on": item["occurred_on"], "note": item["note"],
+                     "allow_duplicate": False} for item in items]
+        rejected = self.request("POST", "/api/statements/save", {
+            "text": csv_text, "filename": "example.csv", "profile_id": profile_id,
+            "rows": selected
+        })
+        self.assertEqual(rejected.status_code, 400, rejected.json)
+        self.assertIn("Row 3", rejected.json["error"])
+        self.assertEqual(self.client.get("/api/transactions").json["total"], 0)
+
+        self.assertEqual(self.client.get("/api/statements/history").json["batches"], [])
+        saved = self.request("POST", "/api/statements/save", {
+            "text": csv_text, "filename": "example.csv", "profile_id": profile_id,
+            "rows": [selected[0], selected[2]]
+        })
+        self.assertEqual(saved.status_code, 201, saved.json)
+        self.assertEqual((saved.json["imported_count"], saved.json["skipped_count"]), (2, 1))
+        self.assertEqual(self.client.get("/api/transactions").json["total"], 2)
+        self.assertEqual(self.client.get("/api/statements/history").json["batches"][0]["filename"],
+                         "example.csv")
+        exported = self.client.get("/api/account/export").json
+        self.assertEqual(len(exported["profiles"][0]["statement_imports"]), 1)
+        self.assertEqual(len(exported["profiles"][0]["statement_import_items"]), 2)
+        destination = app.test_client()
+        destination_csrf = destination.get("/api/bootstrap").json["csrf"]
+        self.assertEqual(destination.post("/api/register", json={
+            "email": "statement-destination@example.com", "password": "another strong password 123"
+        }, headers={"X-CSRF-Token": destination_csrf}).status_code, 200)
+        destination_csrf = destination.get("/api/bootstrap").json["csrf"]
+        restored = destination.post("/api/account/import", json=exported,
+                                    headers={"X-CSRF-Token": destination_csrf})
+        self.assertEqual(restored.status_code, 201, restored.json)
+        self.assertEqual(restored.json["counts"]["statement_import_items"], 2)
+        self.assertEqual(destination.get("/api/statements/history").json["batches"][0]["filename"],
+                         "example.csv")
+        self.assertEqual(destination.post("/api/statements/save", json={
+            "text": csv_text, "filename": "example.csv",
+            "profile_id": destination.get("/api/bootstrap").json["profile_id"],
+            "rows": [selected[0]]
+        }, headers={"X-CSRF-Token": destination_csrf}).status_code, 400)
+        repeated = self.request("POST", "/api/statements/save", {
+            "text": csv_text, "filename": "example.csv", "profile_id": profile_id,
+            "rows": [selected[0]]
+        })
+        self.assertEqual(repeated.status_code, 400)
+        self.assertEqual(self.client.get("/api/transactions").json["total"], 2)
+        legitimate_repeat = {**selected[1], "allow_duplicate": True}
+        allowed = self.request("POST", "/api/statements/save", {
+            "text": csv_text, "filename": "example.csv", "profile_id": profile_id,
+            "rows": [legitimate_repeat]
+        })
+        self.assertEqual(allowed.status_code, 201, allowed.json)
+        self.assertEqual(self.client.get("/api/transactions").json["total"], 3)
+        self.assertEqual(len(self.client.get("/api/statements/history").json["batches"]), 2)
+        self.assertEqual(self.request("POST", "/api/profiles", {
+            "name": "Other", "currency": "GBP"}).status_code, 201)
+        self.assertEqual(self.request("POST", "/api/statements/save", {
+            "text": csv_text, "filename": "example.csv", "profile_id": profile_id,
+            "rows": [selected[2]]
+        }).status_code, 400)
+        self.assertEqual(self.client.get("/api/statements/history").json["batches"], [])
+        self.assertEqual(self.client.get("/api/transactions").json["total"], 0)
+
+    def test_statement_invalid_row_can_be_corrected_and_server_names_the_bad_row(self):
+        self.register("statement-correction@example.com")
+        text = "Date,Description,Amount\n31/02/2026,Bad date,-12.50\n"
+        preview = self.request("POST", "/api/statements/preview", {
+            "text": text, "mapping": {"date": 0, "description": 1, "amount": 2},
+            "date_order": "dmy", "decimal_mark": "dot", "positive_expense": False
+        })
+        self.assertEqual(preview.status_code, 200, preview.json)
+        profile_id = preview.json["profile_id"]
+        self.assertFalse(preview.json["rows"][0]["include"])
+        self.assertIn("Date", preview.json["rows"][0]["error"])
+        row = {"row_number": 2, "kind": "expense", "amount": "12.50",
+               "category": "Other", "occurred_on": "2026-02-31", "note": "Bad date",
+               "allow_duplicate": False}
+        rejected = self.request("POST", "/api/statements/save", {
+            "text": text, "filename": "repair.csv", "profile_id": profile_id, "rows": [row]
+        })
+        self.assertEqual(rejected.status_code, 400, rejected.json)
+        self.assertIn("Row 2", rejected.json["error"])
+        row["occurred_on"] = date.today().isoformat()
+        saved = self.request("POST", "/api/statements/save", {
+            "text": text, "filename": "repair.csv", "profile_id": profile_id, "rows": [row]
+        })
+        self.assertEqual(saved.status_code, 201, saved.json)
+        self.assertEqual(self.client.get("/api/transactions").json["total"], 1)
 
     def test_csrf_and_login_required(self):
         self.assertEqual(self.client.post("/api/register", json={}).status_code, 403)

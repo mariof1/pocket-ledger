@@ -10,11 +10,11 @@ The work is staged so each release is usable and can be checked against an isola
 - Improve small-text contrast, type size, keyboard focus, and form errors. Preserve entered values when validation fails.
 - Verify account/profile isolation, weekly and yearly schedules, edited payment amounts, desktop layout, and live-data preservation.
 
-## Build 2 — reviewed statement import
+## Build 2 — reviewed statement import (implemented)
 
-- Accept common CSV statement formats through a review screen with column mapping, dates, amount signs, and category suggestions.
-- Detect exact and probable duplicates before saving. Let the user skip, edit, and confirm rows in one atomic batch.
-- Keep import history per profile and make a failed batch leave no partial transactions.
+- Accept comma, semicolon and tab-separated bank CSVs through a review screen with column mapping, date order, signed amount or debit/credit columns, decimal marks, and category suggestions from matching saved descriptions.
+- Detect exact and probable duplicates before saving. Let the user skip or edit rows and explicitly acknowledge a legitimate repeat; recheck on the server inside one atomic batch.
+- Keep import history and source-row links per profile, prevent importing the same source row again, and include history in account export/import.
 
 ## Build 3 — accounts, balances, and transfers
 
@@ -28,4 +28,4 @@ The work is staged so each release is usable and can be checked against an isola
 - Split the browser script into API/state, pages, forms, and calculators; organise CSS into tokens, components, and page styles.
 - Add focused checks for the new import and account flows, responsive layouts, and accessible form behaviour.
 
-Build 1 passed isolated server and mortgage-guide tests, a populated desktop review, a 390-pixel responsive check without horizontal overflow, live database integrity and record-count comparisons against a local backup, and an invalid-form review without saving test records. The later builds are planned work and will need their own data-model and interface review before release.
+Build 1 passed isolated server and mortgage-guide tests, a populated desktop review, a 390-pixel responsive check without horizontal overflow, live database integrity and record-count comparisons against a local backup, and an invalid-form review without saving test records. Build 2 passed isolated CSV parsing, duplicate/rollback/profile and export/import checks, the full regression suite, a live-data backup and integrity check, and a desktop and phone-width review using a test CSV without saving it to the live account. Builds 3 and 4 are planned work and will need their own data-model and interface review before release.

@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const localDate = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
-const state = { bootstrap: null, data: null, transactions: null, txOffset: 0, txRequest: 0, page: 'dashboard', month: localDate().slice(0, 7), filter: '', kind: 'all', calc: 'mortgage', mortgageView: 'payments', mortgageInputs: {}, authMode: 'login' };
+const state = { bootstrap: null, data: null, transactions: null, statementHistory: [], statement: null, txOffset: 0, txRequest: 0, page: 'dashboard', month: localDate().slice(0, 7), filter: '', kind: 'all', calc: 'mortgage', mortgageView: 'payments', mortgageInputs: {}, authMode: 'login' };
 const pages = { dashboard: 'Overview', transactions: 'Transactions', budgets: 'Budgets', goals: 'Savings goals', bills: 'Regular bills', calculators: 'Calculators', settings: 'Profiles & settings' };
 const expenseCategories = ['Housing','Groceries','Transport','Utilities','Eating out','Shopping','Entertainment','Health','Travel','Education','Other'];
 const incomeCategories = ['Salary','Freelance','Investment','Gift','Other'];
@@ -55,6 +55,7 @@ async function loadTransactions() {
   let listing = await api(`/api/transactions?${query}`);
   if (requestId !== state.txRequest || state.page !== 'transactions' || requestedFilter !== state.filter || requestedKind !== state.kind) return;
   state.transactions = listing;
+  state.statementHistory = (await api('/api/statements/history')).batches;
   if (state.txOffset > 0 && state.txOffset >= state.transactions.total) {
     state.txOffset = Math.max(0, Math.floor((state.transactions.total - 1) / 50) * 50);
     query = new URLSearchParams({ offset: String(state.txOffset), kind: state.kind, search: state.filter });
@@ -77,6 +78,7 @@ function showError(error) { toast(error.message || String(error)); }
 function clearFormError(form) {
   const summary = form.querySelector('.form-error');
   if (summary) summary.classList.add('hidden');
+  form.querySelectorAll('.statement-row-error').forEach(row => row.classList.remove('statement-row-error'));
   form.querySelectorAll('[aria-invalid="true"]').forEach(field => {
     field.removeAttribute('aria-invalid');
     if ('errorPriorDescription' in field.dataset) {
@@ -89,6 +91,8 @@ function clearFormError(form) {
 function showFormError(form, error) {
   if (!form) return showError(error);
   const message = error.message || String(error);
+  const rowNumber = /^Row (\d+)(?::|\b)/.exec(message)?.[1];
+  const detail = message.replace(/^Row \d+:\s*/, '');
   let summary = form.querySelector('.form-error');
   if (!summary) {
     summary = document.createElement('div');
@@ -114,10 +118,12 @@ function showFormError(form, error) {
     [/^Amount/, 'amount'], [/^Date/, 'occurred_on'], [/^Month/, 'month'],
     [/^Note/, 'note'], [/^Category/, 'category'],
   ];
-  let name = labels.find(([pattern]) => pattern.test(message))?.[1];
+  let name = labels.find(([pattern]) => pattern.test(detail))?.[1];
   if (name === 'category' && form.elements.namedItem('category')?.value === '__new__') name = 'new_category';
-  const field = /^Choose an exported JSON file|^The export file/.test(message)
-    ? form.querySelector('#account-import-file') : name && form.querySelector(`[name="${name}"]`);
+  const row = rowNumber ? form.querySelector(`[data-row="${rowNumber}"]`) : null;
+  if (row) row.classList.add('statement-row-error');
+  const field = /^Choose an exported JSON file|^The export file/.test(detail)
+    ? form.querySelector('#account-import-file') : name && (row || form).querySelector(`[name="${name}"]`);
   if (field) {
     const prior = field.getAttribute('aria-describedby') || '';
     field.dataset.errorPriorDescription = prior;
@@ -125,6 +131,7 @@ function showFormError(form, error) {
     field.setAttribute('aria-describedby', `${prior ? `${prior} ` : ''}${summary.id}`);
   }
   summary.focus();
+  if (row) row.scrollIntoView({ block: 'nearest' });
 }
 function closeMenu(returnFocus = false) {
   $('#sidebar').classList.remove('open');
@@ -210,9 +217,11 @@ function transactionsPage() {
   const rows = listing.transactions;
   const start = listing.total ? listing.offset + 1 : 0;
   const end = Math.min(listing.offset + rows.length, listing.total);
-  return heading('Transactions', 'Every pound in and out, in one place.', `<button class="btn btn-primary" data-action="add-transaction">＋ Add transaction</button>`)
+  const history = state.statementHistory || [];
+  return heading('Transactions', 'Every pound in and out, in one place.', `<button class="btn btn-secondary" data-action="import-statement">Import CSV statement</button><button class="btn btn-primary" data-action="add-transaction">＋ Add transaction</button>`)
     + `<div class="toolbar"><input class="search-input" id="transaction-search" placeholder="Search transactions" value="${escapeHtml(state.filter)}" aria-label="Search transactions"><select id="kind-filter" aria-label="Filter transaction type"><option value="all" ${state.kind === 'all' ? 'selected' : ''}>All activity</option><option value="income" ${state.kind === 'income' ? 'selected' : ''}>Income</option><option value="expense" ${state.kind === 'expense' ? 'selected' : ''}>Expenses</option></select><span class="muted" style="font-size:11px">${listing.total} ${listing.total === 1 ? 'record' : 'records'}</span></div>`
-    + `<section class="panel wide-panel">${rows.length ? `<div class="table-wrap desktop-record-table"><table class="data-table"><thead><tr><th>Transaction</th><th>Category</th><th>Date</th><th style="text-align:right">Amount</th><th></th></tr></thead><tbody>${transactionRows(rows)}</tbody></table></div>${mobileTransactionCards(rows)}` : empty('⇄', 'Nothing to show', 'Try a different search or add a transaction.')}${listing.total ? `<div class="pager"><span>Showing ${start}–${end} of ${listing.total}</span><div><button class="btn btn-outline" data-action="tx-prev" ${listing.offset === 0 ? 'disabled' : ''}>Previous</button><button class="btn btn-outline" data-action="tx-next" ${end >= listing.total ? 'disabled' : ''}>Next</button></div></div>` : ''}</section>`;
+    + `<section class="panel wide-panel">${rows.length ? `<div class="table-wrap desktop-record-table"><table class="data-table"><thead><tr><th>Transaction</th><th>Category</th><th>Date</th><th style="text-align:right">Amount</th><th></th></tr></thead><tbody>${transactionRows(rows)}</tbody></table></div>${mobileTransactionCards(rows)}` : empty('⇄', 'Nothing to show', 'Try a different search or add a transaction.')}${listing.total ? `<div class="pager"><span>Showing ${start}–${end} of ${listing.total}</span><div><button class="btn btn-outline" data-action="tx-prev" ${listing.offset === 0 ? 'disabled' : ''}>Previous</button><button class="btn btn-outline" data-action="tx-next" ${end >= listing.total ? 'disabled' : ''}>Next</button></div></div>` : ''}</section>`
+    + `<section class="panel statement-history">${panelHead('Statement import history', 'The last 20 reviewed CSV imports in this profile')}${history.length ? `<ul>${history.map(batch => `<li><strong>${escapeHtml(batch.filename)}</strong><span>${batch.imported_count} added · ${batch.skipped_count} skipped · ${escapeHtml(batch.created_at.slice(0, 16).replace('T', ' '))}</span></li>`).join('')}</ul>` : `<p class="setting-note">No statements imported in this profile yet.</p>`}</section>`;
 }
 function budgetsPage() {
   const spent = state.data.monthly_totals.expense;
@@ -368,7 +377,7 @@ function settingsPage() {
   const profiles = state.bootstrap.profiles || [];
   const canImport = Boolean(state.bootstrap.import_ready);
   const transfer = `<section class="panel settings-panel">${panelHead('Move your account data', 'Export every profile and import it into another new account')}
-    <p class="setting-note">The JSON file includes transactions, saved categories, budgets, savings goals, bills, commuting plans and links to imported bill payments. It excludes passwords, sign-in sessions and your account email. Keep the file private.</p>
+    <p class="setting-note">The JSON file includes transactions, saved categories, budgets, savings goals, bills, commuting plans, and bill and statement import history with transaction links. It excludes passwords, sign-in sessions and your account email. Keep the file private.</p>
     <button type="button" class="btn btn-secondary" data-action="export-data">Export all data</button>
     <form id="account-import-form" class="transfer-form" novalidate>
       <label>Import into this account<input id="account-import-file" type="file" accept=".json,application/json" required ${canImport ? '' : 'disabled'}></label>
@@ -503,6 +512,102 @@ function modal(type, item = null, duplicate = false) {
   if (type === 'bill') updateBillForm();
   if (type === 'commute') updateCommuteForm();
 }
+function statementDialog(title, content) {
+  $('#dialog-eyebrow').textContent = 'REVIEW BANK STATEMENT';
+  $('#dialog-title').textContent = title;
+  $('#dialog-body').innerHTML = content;
+  if (!$('#form-dialog').open) $('#form-dialog').showModal();
+  $('.dialog-content').scrollTop = 0;
+  $('#dialog-close').focus();
+}
+function openStatementImport() {
+  state.statement = null;
+  statementDialog('Import a CSV statement', `<form id="statement-file-form" novalidate><p class="setting-note">Choose a CSV file from your bank. Your statement is reviewed here before any transaction is saved. Up to 500 rows and 1 MB per file.</p><label class="statement-file-label">CSV statement<input id="statement-file" type="file" accept=".csv,text/csv" required></label><p class="setting-note">The app can read UTF-8 and common Windows CSV exports. Review dates, signs and duplicates carefully; bank files vary.</p><div class="form-actions"><button type="button" class="btn btn-outline" id="dialog-cancel">Cancel</button></div></form>`);
+}
+async function readStatementFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  if (file.size > 1_000_000) throw new Error('The CSV statement must be 1 MB or smaller.');
+  const bytes = await file.arrayBuffer();
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { text = new TextDecoder('windows-1252').decode(bytes); }
+  const inspected = await api('/api/statements/inspect', { method: 'POST', body: JSON.stringify({ text }) });
+  state.statement = { text, filename: file.name, inspected, preview: null };
+  renderStatementMapping();
+}
+function statementColumnSelect(key, label, mapping, headers) {
+  const selected = mapping[key];
+  return `<label>${label}<select name="${key}"><option value="">${key === 'date' ? 'Choose date column' : 'Not in this file'}</option>${headers.map((header, index) => `<option value="${index}" ${selected === index ? 'selected' : ''}>${escapeHtml(header)} (column ${index + 1})</option>`).join('')}</select></label>`;
+}
+function renderStatementMapping() {
+  const { inspected, filename } = state.statement;
+  const { headers, mapping, sample } = inspected;
+  const selectors = [['date', 'Transaction date'], ['description', 'Description / payee'],
+                     ['amount', 'Signed amount'], ['debit', 'Debit / money out'],
+                     ['credit', 'Credit / money in'], ['category', 'Category (optional)']]
+    .map(([key, label]) => statementColumnSelect(key, label, mapping, headers)).join('');
+  statementDialog('Map statement columns', `<form id="statement-mapping-form" novalidate><p class="setting-note"><strong>${escapeHtml(filename)}</strong> · ${inspected.row_count} rows. Match the bank's headers below. Use either one signed amount column or separate debit and credit columns.</p><div class="statement-mapping-grid">${selectors}<label>Date order<select name="date_order"><option value="dmy">Day / month / year (UK)</option><option value="mdy">Month / day / year</option><option value="ymd">Year / month / day</option></select></label><label>Decimal separator<select name="decimal_mark"><option value="dot">Dot, e.g. 1,234.56</option><option value="comma">Comma, e.g. 1.234,56</option></select></label><label>Signed amount direction<select name="positive_expense"><option value="false">Negative = expense, positive = income</option><option value="true">Positive = expense, negative = income</option></select></label></div><div class="statement-sample"><strong>Sample from the file</strong><div class="table-wrap"><table class="data-table"><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${sample.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div><div class="form-actions"><button type="button" class="btn btn-outline" data-action="statement-back-file">Choose another file</button><button type="submit" class="btn btn-primary">Preview rows</button></div></form>`);
+}
+async function previewStatement(form) {
+  const data = Object.fromEntries(new FormData(form));
+  const mapping = {};
+  for (const key of ['date', 'description', 'amount', 'debit', 'credit', 'category']) {
+    if (data[key] !== '') mapping[key] = Number(data[key]);
+  }
+  const result = await api('/api/statements/preview', { method: 'POST', body: JSON.stringify({
+    text: state.statement.text, mapping, date_order: data.date_order,
+    decimal_mark: data.decimal_mark, positive_expense: data.positive_expense === 'true'
+  }) });
+  state.statement.preview = result;
+  renderStatementReview();
+}
+function statementReviewRow(item) {
+  const alreadyImported = item.duplicate === 'already imported from this file';
+  const warning = item.error || (alreadyImported ? 'Already imported from this CSV — unavailable' : item.duplicate ? `${item.duplicate.charAt(0).toUpperCase()}${item.duplicate.slice(1)} — review before including` : 'Ready to import');
+  const isDuplicate = Boolean(item.duplicate);
+  const number = item.row_number;
+  const fields = `<div class="statement-row-fields">
+    <label>Date<input name="occurred_on" type="date" aria-label="Row ${number} date" value="${escapeHtml(item.occurred_on || '')}"></label>
+    <label>Type<select name="kind" aria-label="Row ${number} type"><option value="expense" ${item.kind !== 'income' ? 'selected' : ''}>Expense</option><option value="income" ${item.kind === 'income' ? 'selected' : ''}>Income</option></select></label>
+    <label>Amount<input name="amount" inputmode="decimal" aria-label="Row ${number} amount" value="${escapeHtml(item.amount || item.raw_amount || '')}"></label>
+    <label>Category<input name="category" list="statement-categories" maxlength="40" aria-label="Row ${number} category" value="${escapeHtml(item.category || 'Other')}"></label>
+    <label class="statement-note-label">Description<input name="note" maxlength="200" aria-label="Row ${number} description" value="${escapeHtml(item.note || '')}"></label>
+  </div>`;
+  return `<div class="statement-review-row ${item.error || isDuplicate ? 'statement-caution' : ''}" data-row="${number}"><div class="statement-row-top"><label><input type="checkbox" name="include" ${item.include ? 'checked' : ''} ${alreadyImported ? 'disabled' : ''}> Include row ${number}</label><span>${escapeHtml(warning)}</span></div>${fields}${isDuplicate && !alreadyImported ? `<label class="statement-override"><input type="checkbox" name="allow_duplicate"> I checked row ${number} and want a second transaction for this payment</label>` : ''}${item.error ? `<small class="statement-raw">Original date: ${escapeHtml(item.raw_date)} · amount: ${escapeHtml(item.raw_amount)}</small>` : ''}</div>`;
+}
+function renderStatementReview() {
+  const { preview, filename } = state.statement;
+  const cats = [...new Set([...state.data.categories, ...expenseCategories, ...incomeCategories])];
+  statementDialog('Review statement rows', `<form id="statement-review-form" novalidate><p class="setting-note"><strong>${escapeHtml(filename)}</strong> · ${preview.row_count} rows. Check dates, expense/income signs and categories. Exact and probable duplicates are skipped by default; you can explicitly include a legitimate repeat.</p><div class="statement-review-toolbar"><div><button type="button" class="table-action" data-action="statement-select-clean">Select ready rows</button><button type="button" class="table-action" data-action="statement-clear">Clear selection</button></div><strong id="statement-selection-summary" aria-live="polite"></strong></div><datalist id="statement-categories">${cats.map(cat => `<option value="${escapeHtml(cat)}"></option>`).join('')}</datalist><div class="statement-review-list">${preview.rows.map(statementReviewRow).join('')}</div><p class="setting-note">Only checked rows are saved. A failed batch saves no transactions. After import, the file and import count appear in this profile's history.</p><div class="form-actions"><button type="button" class="btn btn-outline" data-action="statement-back-map">Back to columns</button><button type="submit" class="btn btn-primary" id="statement-save" disabled>Import selected</button></div></form>`);
+  updateStatementSelection();
+}
+function updateStatementSelection() {
+  const form = $('#statement-review-form'); if (!form) return;
+  const selected = [...form.querySelectorAll('.statement-review-row input[name="include"]:checked')];
+  $('#statement-selection-summary').textContent = `${selected.length} of ${state.statement.preview.row_count} selected`;
+  const submit = $('#statement-save');
+  submit.disabled = !selected.length;
+  submit.textContent = selected.length ? `Import ${selected.length} transaction${selected.length === 1 ? '' : 's'}` : 'Import selected';
+}
+async function saveStatement(form) {
+  const rows = [...form.querySelectorAll('.statement-review-row')].filter(row => row.querySelector('[name="include"]').checked).map(row => ({
+    row_number: Number(row.dataset.row), occurred_on: row.querySelector('[name="occurred_on"]').value,
+    kind: row.querySelector('[name="kind"]').value, amount: row.querySelector('[name="amount"]').value,
+    category: row.querySelector('[name="category"]').value, note: row.querySelector('[name="note"]').value,
+    allow_duplicate: Boolean(row.querySelector('[name="allow_duplicate"]')?.checked)
+  }));
+  if (!rows.length) throw new Error('Select at least one row to import.');
+  const result = await api('/api/statements/save', { method: 'POST', body: JSON.stringify({
+    text: state.statement.text, filename: state.statement.filename,
+    profile_id: state.statement.preview.profile_id, rows
+  }) });
+  state.statement = null;
+  $('#form-dialog').close();
+  state.txOffset = 0;
+  await loadData();
+  toast(`${result.imported_count} transactions imported; ${result.skipped_count} rows skipped.`);
+}
 async function openBillImport() {
   const preview = await api(`/api/bills/import-preview?month=${encodeURIComponent(state.month)}`);
   state.billImportPreview = preview;
@@ -608,7 +713,7 @@ document.addEventListener('click', async event => {
     if (button.id === 'auth-toggle') return switchAuth();
     if (button.id === 'menu-toggle') return toggleMenu();
     if (button.id === 'menu-scrim') return closeMenu(true);
-    if (button.id === 'dialog-close' || button.id === 'dialog-cancel') return $('#form-dialog').close();
+    if (button.id === 'dialog-close' || button.id === 'dialog-cancel') { state.statement = null; return $('#form-dialog').close(); }
     if (button.id === 'commute-preview-button') {
       try { return await previewCommute(); }
       catch (error) { return showFormError($('#dialog-form'), error); }
@@ -620,6 +725,11 @@ document.addEventListener('click', async event => {
     if (!action) return;
     if (action === 'select-profile') { await api(`/api/profiles/${id}/select`, { method: 'POST' }); await boot(); await navigate('dashboard'); return toast('Profile switched.'); }
     if (action === 'export-data') return await downloadAccount();
+    if (action === 'import-statement') return openStatementImport();
+    if (action === 'statement-back-file') return openStatementImport();
+    if (action === 'statement-back-map') return renderStatementMapping();
+    if (action === 'statement-select-clean') { $('#statement-review-form').querySelectorAll('.statement-review-row').forEach(row => { const item = state.statement.preview.rows.find(item => item.row_number === Number(row.dataset.row)); row.querySelector('[name="include"]').checked = !item.error && !item.duplicate; }); return updateStatementSelection(); }
+    if (action === 'statement-clear') { $('#statement-review-form').querySelectorAll('[name="include"]').forEach(input => { input.checked = false; }); return updateStatementSelection(); }
     if (action === 'import-bills') return await openBillImport();
     if (action === 'select-ready-bills') { $('#bill-import-form').querySelectorAll('input[name="bill-occurrence"]').forEach(input => { const item = state.billImportPreview.items[Number(input.dataset.index)]; input.checked = !input.disabled && !item.possible_duplicate; }); return updateBillImportSelection(); }
     if (action === 'clear-import-bills') { $('#bill-import-form').querySelectorAll('input[name="bill-occurrence"]').forEach(input => { input.checked = false; }); return updateBillImportSelection(); }
@@ -636,7 +746,19 @@ document.addEventListener('click', async event => {
   } catch (error) { showError(error); }
 });
 document.addEventListener('submit', async event => {
-  if (event.target.id === 'auth-form') {
+  if (event.target.id === 'statement-file-form') {
+    event.preventDefault();
+  } else if (event.target.id === 'statement-mapping-form') {
+    event.preventDefault();
+    clearFormError(event.target);
+    const submit = event.target.querySelector('[type="submit"]'); submit.disabled = true;
+    try { await previewStatement(event.target); } catch (error) { showFormError(event.target, error); } finally { submit.disabled = false; }
+  } else if (event.target.id === 'statement-review-form') {
+    event.preventDefault();
+    clearFormError(event.target);
+    const submit = $('#statement-save'); submit.disabled = true;
+    try { await saveStatement(event.target); } catch (error) { showFormError(event.target, error); } finally { submit.disabled = false; }
+  } else if (event.target.id === 'auth-form') {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     try { await api(`/api/${state.authMode}`, { method: 'POST', body: JSON.stringify(data) }); await boot(); }
@@ -668,6 +790,11 @@ document.addEventListener('submit', async event => {
   }
 });
 document.addEventListener('change', async event => {
+  if (event.target.id === 'statement-file') {
+    try { await readStatementFile(event.target); }
+    catch (error) { showFormError($('#statement-file-form'), error); }
+  }
+  if (event.target.name === 'include' && event.target.closest('#statement-review-form')) updateStatementSelection();
   if (event.target.name === 'bill-occurrence') updateBillImportSelection();
   if (event.target.id === 'month-picker') { state.month = event.target.value; try { await loadData(); } catch (error) { showError(error); } }
   if (event.target.id === 'kind-filter') { state.kind = event.target.value; state.txOffset = 0; try { await loadTransactions(); } catch (error) { showError(error); } }
@@ -694,4 +821,5 @@ document.addEventListener('input', event => {
     updateCalculator();
   }
 });
+$('#form-dialog').addEventListener('close', () => { state.statement = null; });
 boot().catch(showError);

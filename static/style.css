@@ -71,3 +71,38 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 input[aria-invalid="true"],select[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:#ba5147!important;box-shadow:0 0 0 2px rgba(186,81,71,.12)}
 @media(max-width:850px){.bill-status-grid,.bill-status-next{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){.bill-status-panel{padding:17px}.bill-status-grid,.bill-status-next{grid-template-columns:1fr}.bill-status-grid strong{font-size:21px}.bill-status-panel .panel-heading{align-items:flex-start;gap:8px}}
+
+/* CSV import keeps column mapping and transaction review readable in one dialog. */
+dialog:has(#statement-file-form),dialog:has(#statement-mapping-form),dialog:has(#statement-review-form){width:min(96vw,940px)}
+.statement-file-label,.statement-mapping-grid label,.statement-row-fields label{display:grid;gap:7px;font-size:12px;font-weight:650;color:var(--ink)}
+.statement-file-label input,.statement-mapping-grid select,.statement-row-fields input,.statement-row-fields select{width:100%;min-width:0;border:1px solid var(--line);border-radius:9px;padding:10px 11px;font:inherit;font-weight:400;color:var(--ink);background:#fff}
+.statement-file-label{margin:16px 0}
+.statement-mapping-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:18px 0}
+.statement-sample{border:1px solid var(--line);border-radius:12px;padding:13px;margin:20px 0}
+.statement-sample>strong{display:block;font-size:13px;margin-bottom:9px}
+.statement-sample .table-wrap{overflow:auto;max-width:100%}
+.statement-sample td,.statement-sample th{white-space:nowrap}
+.statement-review-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:15px 0}
+.statement-review-toolbar>div{display:flex;flex-wrap:wrap;gap:8px}
+.statement-review-toolbar strong{font-size:12px;color:var(--green);white-space:nowrap}
+.statement-review-list{display:grid;gap:10px;max-height:51vh;overflow:auto;padding:3px}
+.dialog-content:has(#statement-review-form){display:flex;flex-direction:column;overflow:hidden;max-height:90vh}
+#dialog-body:has(#statement-review-form),#statement-review-form{display:flex;flex-direction:column;min-height:0;flex:1}
+#statement-review-form .statement-review-list{max-height:none;min-height:110px;flex:1}
+#statement-review-form .form-actions{border-top:1px solid var(--line);padding-top:12px;margin-top:10px}
+.statement-review-row{border:1px solid var(--line);border-radius:12px;padding:13px;background:#fff}
+.statement-review-row.statement-caution{border-color:#ebd6b4;background:#fffaf1}
+.statement-review-row.statement-row-error{border-color:#ba5147;box-shadow:0 0 0 2px rgba(186,81,71,.15)}
+.statement-row-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;font-size:12px}
+.statement-row-top label,.statement-override{display:flex;align-items:center;gap:8px;font-weight:650}
+.statement-row-top span{color:var(--muted);text-align:right}
+.statement-row-top input,.statement-override input{accent-color:var(--green);width:17px;height:17px}
+.statement-row-fields{display:grid;grid-template-columns:130px 110px 110px 150px minmax(170px,1fr);gap:10px}
+.statement-override,.statement-raw{display:flex;margin-top:12px;font-size:12px;color:#85612d}
+.statement-history{margin-top:17px}
+.statement-history ul{list-style:none;padding:0;margin:10px 0 0}
+.statement-history li{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:10px 0;font-size:12px}
+.statement-history li:last-child{border-bottom:0}
+.statement-history li span{color:var(--muted)}
+@media(max-width:850px){.statement-mapping-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.statement-row-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.statement-note-label{grid-column:1/-1}}
+@media(max-width:600px){.statement-mapping-grid,.statement-row-fields{grid-template-columns:1fr}.statement-note-label{grid-column:auto}.statement-row-top,.statement-review-toolbar,.statement-history li{align-items:flex-start;flex-direction:column}.statement-row-top span{text-align:left}.statement-review-list{max-height:53vh}.statement-review-row{padding:11px}}

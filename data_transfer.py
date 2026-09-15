@@ -41,6 +41,17 @@ def export_account(conn, user_id):
                WHERE bills.profile_id = ? AND transactions.profile_id = ?
                ORDER BY bill_imports.bill_id, bill_imports.due_on""",
             (profile["id"], profile["id"]))]
+        item["statement_imports"] = [dict(row) for row in conn.execute(
+            """SELECT id, filename, file_hash, imported_count, skipped_count, created_at
+               FROM statement_imports WHERE profile_id = ? ORDER BY id""", (profile["id"],))]
+        item["statement_import_items"] = [dict(row) for row in conn.execute(
+            """SELECT statement_import_items.batch_id, statement_import_items.file_hash,
+               statement_import_items.source_row, statement_import_items.transaction_id
+               FROM statement_import_items
+               JOIN transactions ON transactions.id = statement_import_items.transaction_id
+               WHERE statement_import_items.profile_id = ? AND transactions.profile_id = ?
+               ORDER BY statement_import_items.batch_id, statement_import_items.source_row""",
+            (profile["id"], profile["id"]))]
         profiles.append(item)
     return {"format": FORMAT, "version": VERSION, "profiles": profiles}
 
@@ -110,6 +121,9 @@ def destination_profile(conn, user_id):
         if conn.execute(f"SELECT 1 FROM {table} WHERE profile_id = ? LIMIT 1",
                         (profile_id,)).fetchone():
             raise ValueError("Import requires a new account with one empty profile.")
+    if conn.execute("SELECT 1 FROM statement_imports WHERE profile_id = ? LIMIT 1",
+                    (profile_id,)).fetchone():
+        raise ValueError("Import requires a new account with one empty profile.")
     return profile_id
 
 
@@ -124,7 +138,8 @@ def import_account(conn, user_id, document):
     try:
         first_profile_id = destination_profile(conn, user_id)
         names = set()
-        counts = {table: 0 for table in (*TABLE_FIELDS, "bill_imports")}
+        counts = {table: 0 for table in (*TABLE_FIELDS, "bill_imports",
+                                         "statement_imports", "statement_import_items")}
         for index, raw in enumerate(profiles):
             profile = record(raw, "Profile")
             name = text(profile.get("name"), "Profile name", 40).strip()
@@ -259,6 +274,44 @@ def import_account(conn, user_id, document):
                     "INSERT INTO bill_imports(bill_id, due_on, transaction_id) VALUES(?, ?, ?)",
                     (bill_id, iso_date(item.get("due_on"), "Bill payment date"), transaction_id))
                 counts["bill_imports"] += 1
+            batch_ids, batch_hashes = {}, {}
+            for row in records(profile.get("statement_imports", []), "Statement imports"):
+                item = record(row, "Statement import")
+                old_id = integer(item.get("id"), "Statement import reference")
+                if old_id in batch_ids:
+                    raise ValueError("Statement import references must be unique.")
+                filename = text(item.get("filename"), "Statement filename", 120).strip()
+                file_hash = text(item.get("file_hash"), "Statement hash", 64)
+                if not re.fullmatch(r"[0-9a-f]{64}", file_hash):
+                    raise ValueError("Statement hash is invalid.")
+                imported = integer(item.get("imported_count"), "Imported row count", 500, zero=True)
+                skipped = integer(item.get("skipped_count"), "Skipped row count", 500, zero=True)
+                batch_ids[old_id] = conn.execute("""INSERT INTO statement_imports(profile_id,
+                    filename, file_hash, imported_count, skipped_count, created_at)
+                    VALUES(?, ?, ?, ?, ?, ?)""", (profile_id, filename, file_hash,
+                    imported, skipped, timestamp(item.get("created_at")))).lastrowid
+                batch_hashes[old_id] = file_hash
+                counts["statement_imports"] += 1
+            for row in records(profile.get("statement_import_items", []), "Statement import items"):
+                item = record(row, "Statement import item")
+                old_batch_id = integer(item.get("batch_id"), "Statement batch reference")
+                batch_id = batch_ids.get(old_batch_id)
+                transaction_id = transaction_ids.get(integer(
+                    item.get("transaction_id"), "Statement transaction reference"))
+                if batch_id is None or transaction_id is None:
+                    raise ValueError("A statement import refers to a missing batch or transaction.")
+                file_hash = text(item.get("file_hash"), "Statement hash", 64)
+                if not re.fullmatch(r"[0-9a-f]{64}", file_hash):
+                    raise ValueError("Statement hash is invalid.")
+                if file_hash != batch_hashes[old_batch_id]:
+                    raise ValueError("Statement item hash does not match its batch.")
+                source_row = integer(item.get("source_row"), "Statement source row", 501)
+                if source_row < 2:
+                    raise ValueError("Statement source row is invalid.")
+                conn.execute("""INSERT INTO statement_import_items(batch_id, profile_id,
+                    file_hash, source_row, transaction_id) VALUES(?, ?, ?, ?, ?)""",
+                    (batch_id, profile_id, file_hash, source_row, transaction_id))
+                counts["statement_import_items"] += 1
         conn.commit()
         return {"profiles": len(profiles), "counts": counts, "profile_id": first_profile_id}
     except Exception:
