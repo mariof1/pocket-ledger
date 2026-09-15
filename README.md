@@ -39,6 +39,22 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000), create an account with a pa
 
 SQLite data, server-side sessions and the signing key are kept in `instance/`, which is excluded from Git. Back up that directory to retain accounts and financial records. Existing accounts must sign in once after upgrading from a version that used cookie-only sessions. Set `LEDGER_INSTANCE` to use a different data directory. `LEDGER_SECRET_KEY` can override the generated signing key.
 
+The server now records its SQLite schema version and runs missing upgrades inside one transaction at startup. A failed upgrade rolls back its database changes, and an app version older than the database refuses to open it. Account/profile and statement routes live in separate server files, while monthly schedule maths and migration steps have their own modules. The browser loads ordered state, page, calculator, form and event scripts; CSS is split into tokens, shared components and page rules.
+
+Before upgrading or restoring, make a verified online database backup (the server can stay running):
+
+```powershell
+.venv\Scripts\python.exe backup_database.py
+```
+
+The command prints its new file under `instance/backups/`. For a rollback, stop the Pocket Ledger server, keep a backup of the current database, then copy the chosen backup over `instance/ledger.sqlite3` and start the app version that created it. For example, after checking the backup filename:
+
+```powershell
+Copy-Item -LiteralPath 'instance/backups/ledger-YYYYMMDD-HHMMSS.sqlite3' -Destination 'instance/ledger.sqlite3' -Force
+```
+
+Keep `instance/secret.key` with the database when moving to another server; the database backup alone does not include that signing key. The export/import feature moves user records between accounts but does not replace a full server backup.
+
 Change your password in Profiles & settings; this signs out other sessions. If you forget it, the server owner can reset it from a console on the server:
 
 ```powershell
@@ -52,7 +68,11 @@ For access from another device, keep Pocket Ledger bound to loopback and configu
 ## Verify
 
 ```powershell
-.venv\Scripts\python.exe -m unittest -v test_app.py
+.venv\Scripts\python.exe -m unittest -v test_app.py test_migrations.py
+node --check static/state.js
+node --check static/pages.js
+node --check static/calculators.js
+node --check static/forms.js
 node --check static/app.js
 node --test test_mortgage_guide.js
 ```
