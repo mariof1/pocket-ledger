@@ -96,6 +96,7 @@ jobs:
           assert result['user'] is None and result['version'] == open('VERSION').read().strip()
           PY
           [[ "$(docker exec "$name" id -u)" == 10001 ]]
+          [[ "$(docker exec "$name" stat -c %a /data/secret.key)" == 600 ]]
           docker exec -i "$name" python - <<'PY'
           import sqlite3
           conn = sqlite3.connect('/data/ledger.sqlite3')

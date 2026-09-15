@@ -14,7 +14,7 @@ docker compose -f compose.prod.yaml ps
 curl -fsS http://127.0.0.1:5000/api/bootstrap
 ```
 
-The `ledger-data` named volume stores `ledger.sqlite3` and `secret.key`. `docker compose down` keeps the volume; do not use `down -v` on a deployment you want to retain. The image runs as UID/GID 10001, drops Linux capabilities, uses a read-only root filesystem and a small temporary filesystem, and exposes a health check. A custom bind mount for `/data` must be writable by UID 10001.
+The `ledger-data` named volume stores `ledger.sqlite3` and `secret.key`. The signing key is created with owner-only file permissions; protect the volume because the database and key are stored unencrypted. `docker compose down` keeps the volume; do not use `down -v` on a deployment you want to retain. The image runs as UID/GID 10001, drops Linux capabilities, uses a read-only root filesystem and a small temporary filesystem, and exposes a health check. A custom bind mount for `/data` must be writable by UID 10001.
 
 To build locally instead of pulling GHCR:
 

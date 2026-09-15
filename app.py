@@ -42,7 +42,15 @@ elif SECRET_FILE.exists():
     secret_key = SECRET_FILE.read_text(encoding="utf-8")
 else:
     secret_key = secrets.token_hex(32)
-    SECRET_FILE.write_text(secret_key, encoding="utf-8")
+    try:
+        descriptor = os.open(SECRET_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        secret_key = SECRET_FILE.read_text(encoding="utf-8")
+    else:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as key_file:
+            key_file.write(secret_key)
+if "LEDGER_SECRET_KEY" not in os.environ:
+    SECRET_FILE.chmod(0o600)
 
 app = Flask(__name__, static_folder=None)
 app.config.update(
