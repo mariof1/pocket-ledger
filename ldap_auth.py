@@ -40,6 +40,26 @@ class DirectoryUser:
     username: str
     email: str
     display_name: str
+    photo: bytes | None = None
+    photo_mime: str | None = None
+
+
+MAX_PHOTO_BYTES = 1_000_000
+
+
+def _photo_from_entry(entry) -> tuple[bytes | None, str | None]:
+    """Use only small browser-safe image formats from AD's binary photo attributes."""
+    for attribute in ("thumbnailPhoto", "jpegPhoto"):
+        value = _attribute(entry, attribute, None)
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        if not isinstance(value, bytes) or not 0 < len(value) <= MAX_PHOTO_BYTES:
+            continue
+        if value.startswith(b"\xff\xd8\xff") and value.endswith(b"\xff\xd9"):
+            return value, "image/jpeg"
+        if value.startswith(b"\x89PNG\r\n\x1a\n") and b"IEND" in value[-32:]:
+            return value, "image/png"
+    return None, None
 
 
 def _boolean(name: str, default: bool, environment) -> bool:
@@ -142,7 +162,8 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
             f"(|(sAMAccountName={escaped})(userPrincipalName={escaped})))",
             search_scope=SUBTREE,
             attributes=["sAMAccountName", "userPrincipalName", "mail", "displayName",
-                        "userAccountControl", "msDS-User-Account-Control-Computed", "memberOf"],
+                        "userAccountControl", "msDS-User-Account-Control-Computed", "memberOf",
+                        "thumbnailPhoto", "jpegPhoto"],
             size_limit=2,
             time_limit=settings.timeout,
         )
@@ -178,8 +199,41 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
         finally:
             if user_connection is not None:
                 user_connection.unbind()
+        photo, photo_mime = _photo_from_entry(entry)
         return DirectoryUser(username=username.lower(), email=email,
-                             display_name=str(_attribute(entry, "displayName")).strip())
+                             display_name=str(_attribute(entry, "displayName")).strip(),
+                             photo=photo, photo_mime=photo_mime)
+    except DirectoryRejected:
+        raise
+    except LDAPException as error:
+        raise DirectoryUnavailable("Directory authentication is temporarily unavailable.") from error
+    finally:
+        if service is not None:
+            service.unbind()
+
+
+def fetch_photo(settings: LdapSettings, username: str) -> tuple[bytes | None, str | None]:
+    """Refresh a signed-in directory user's photo using the configured service bind."""
+    if not username:
+        raise DirectoryRejected("Directory identity is missing.")
+    server, auto_bind = _server(settings)
+    service = None
+    try:
+        service = Connection(server, user=settings.bind_dn, password=settings.bind_password,
+                             auto_bind=auto_bind, receive_timeout=settings.timeout,
+                             raise_exceptions=True)
+        found = service.search(
+            settings.base_dn,
+            "(&(objectClass=user)(objectCategory=person)"
+            f"(sAMAccountName={escape_filter_chars(username)}))",
+            search_scope=SUBTREE,
+            attributes=["thumbnailPhoto", "jpegPhoto"],
+            size_limit=2,
+            time_limit=settings.timeout,
+        )
+        if not found or len(service.entries) != 1:
+            raise DirectoryRejected("Directory account was not found.")
+        return _photo_from_entry(service.entries[0])
     except DirectoryRejected:
         raise
     except LDAPException as error:
