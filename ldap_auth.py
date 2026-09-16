@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import ssl
 from dataclasses import dataclass
@@ -12,6 +13,10 @@ from urllib.parse import urlparse
 from ldap3 import AUTO_BIND_NO_TLS, AUTO_BIND_TLS_BEFORE_BIND, Connection, Server, SUBTREE, Tls
 from ldap3.core.exceptions import LDAPBindError, LDAPException, LDAPInvalidCredentialsResult
 from ldap3.utils.conv import escape_filter_chars
+from ledger_logging import ldap_failure
+
+
+logger = logging.getLogger("pocket_ledger.ldap")
 
 
 class DirectoryRejected(Exception):
@@ -149,12 +154,15 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
     identifier = identifier.strip()
     if not identifier or not password:
         raise DirectoryRejected("Invalid username or password.")
-    server, auto_bind = _server(settings)
+    stage = "server_setup"
     service = None
     try:
+        server, auto_bind = _server(settings)
+        stage = "service_bind"
         service = Connection(server, user=settings.bind_dn, password=settings.bind_password,
                              auto_bind=auto_bind, receive_timeout=settings.timeout,
                              raise_exceptions=True)
+        stage = "user_search"
         escaped = escape_filter_chars(identifier)
         found = service.search(
             settings.base_dn,
@@ -191,6 +199,7 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
             raise DirectoryRejected("Your directory account needs a valid email address.")
         user_connection = None
         try:
+            stage = "user_bind"
             user_connection = Connection(server, user=entry.entry_dn, password=password,
                                          auto_bind=auto_bind, receive_timeout=settings.timeout,
                                          raise_exceptions=True)
@@ -205,7 +214,8 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
                              photo=photo, photo_mime=photo_mime)
     except DirectoryRejected:
         raise
-    except LDAPException as error:
+    except (LDAPException, OSError) as error:
+        ldap_failure(logger, "login", stage, error)
         raise DirectoryUnavailable("Directory authentication is temporarily unavailable.") from error
     finally:
         if service is not None:
@@ -216,12 +226,15 @@ def fetch_photo(settings: LdapSettings, username: str) -> tuple[bytes | None, st
     """Refresh a signed-in directory user's photo using the configured service bind."""
     if not username:
         raise DirectoryRejected("Directory identity is missing.")
-    server, auto_bind = _server(settings)
+    stage = "server_setup"
     service = None
     try:
+        server, auto_bind = _server(settings)
+        stage = "service_bind"
         service = Connection(server, user=settings.bind_dn, password=settings.bind_password,
                              auto_bind=auto_bind, receive_timeout=settings.timeout,
                              raise_exceptions=True)
+        stage = "photo_search"
         found = service.search(
             settings.base_dn,
             "(&(objectClass=user)(objectCategory=person)"
@@ -236,7 +249,8 @@ def fetch_photo(settings: LdapSettings, username: str) -> tuple[bytes | None, st
         return _photo_from_entry(service.entries[0])
     except DirectoryRejected:
         raise
-    except LDAPException as error:
+    except (LDAPException, OSError) as error:
+        ldap_failure(logger, "photo_sync", stage, error)
         raise DirectoryUnavailable("Directory authentication is temporarily unavailable.") from error
     finally:
         if service is not None:

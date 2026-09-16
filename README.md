@@ -14,7 +14,7 @@ Pocket Ledger is a private spending and savings app you can run on your own comp
 
 4. Open [http://127.0.0.1:5000](http://127.0.0.1:5000) on that computer. Create your account with a password of at least 12 characters.
 
-The Compose file downloads the published `0.2.0` image and keeps your data in a Docker volume. To see whether it is running, use `docker compose -f compose.prod.yaml ps`. To stop it, use `docker compose -f compose.prod.yaml stop`; run the command in step 3 to start it again.
+The Compose file downloads the published `0.3.1` image and keeps your data in a Docker volume. To see whether it is running, use `docker compose -f compose.prod.yaml ps`. To stop it, use `docker compose -f compose.prod.yaml stop`; run the command in step 3 to start it again.
 
 ## Sample Compose file
 
@@ -23,7 +23,7 @@ If you prefer to make your own Compose file, create an empty folder and save the
 ```yaml
 services:
   ledger:
-    image: ghcr.io/mariof1/pocket-ledger:0.2.0
+    image: ghcr.io/mariof1/pocket-ledger:0.3.1
     init: true
     restart: unless-stopped
     read_only: true
@@ -53,7 +53,7 @@ If you already use Docker and just want to start the image, copy these commands 
 
 ```text
 docker volume create pocket-ledger-data
-docker run -d --name pocket-ledger --restart unless-stopped -p 127.0.0.1:5000:5000 -v pocket-ledger-data:/data ghcr.io/mariof1/pocket-ledger:0.2.0
+docker run -d --name pocket-ledger --restart unless-stopped -p 127.0.0.1:5000:5000 -v pocket-ledger-data:/data ghcr.io/mariof1/pocket-ledger:0.3.1
 ```
 
 Open [http://127.0.0.1:5000](http://127.0.0.1:5000). Later, use `docker stop pocket-ledger` and `docker start pocket-ledger` to stop or start it without deleting your data.
@@ -65,5 +65,7 @@ Both options save accounts and records in a Docker volume, separate from the dow
 The supplied setup opens only on the computer running Docker. For access from other devices, follow the [HTTPS setup instructions](DEPLOYMENT.md).
 
 For help using bills, statement imports, profiles and calculators, see the [user guide](USER_GUIDE.md). Developers can find [tests and contribution notes](CONTRIBUTING.md) and the [build pipeline](https://github.com/mariof1/pocket-ledger/actions/workflows/pipeline.yml). See [releases](https://github.com/mariof1/pocket-ledger/releases) for newer published images.
+
+To see server activity, open the Ledger container's **Logs** in Portainer, or run `docker compose -f compose.prod.yaml logs -f ledger`. Logs show startup, requests, sign-ins and directory connection failures without passwords or financial records. See [logging options](DEPLOYMENT.md#container-logs) for detail.
 
 Active Directory login is optional. Server owners can follow the [LDAP and Portainer instructions](DEPLOYMENT.md#active-directory-login) to let users sign in with an AD username or user principal name.

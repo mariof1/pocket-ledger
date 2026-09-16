@@ -1,6 +1,6 @@
 services:
   ledger:
-    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:-0.2.0}
+    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:-0.3.1}
     init: true
     restart: unless-stopped
     read_only: true
@@ -16,6 +16,8 @@ services:
     environment:
       LEDGER_HTTPS: ${LEDGER_HTTPS:-0}
       LEDGER_ALLOW_REGISTRATION: ${LEDGER_ALLOW_REGISTRATION:-1}
+      LEDGER_LOG_LEVEL: ${LEDGER_LOG_LEVEL:-INFO}
+      LEDGER_ACCESS_LOG: ${LEDGER_ACCESS_LOG:-1}
       LEDGER_LDAP_URL: ${LEDGER_LDAP_URL:-}
       LEDGER_LDAP_BASE_DN: ${LEDGER_LDAP_BASE_DN:-}
       LEDGER_LDAP_BIND_DN: ${LEDGER_LDAP_BIND_DN:-}

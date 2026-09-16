@@ -58,7 +58,7 @@ jobs:
       - name: Run server and migration tests
         run: python -m unittest -v test_app.py test_ldap_auth.py test_migrations.py
       - name: Compile server modules
-        run: python -m compileall -q app.py account_routes.py auth_routes.py planning_routes.py statement_routes.py migrations.py ldap_auth.py
+        run: python -m compileall -q app.py account_routes.py auth_routes.py planning_routes.py statement_routes.py migrations.py ldap_auth.py ledger_logging.py
       - name: Check browser script syntax
         run: |
           for file in static/*.js; do node --check "$file"; done
@@ -95,6 +95,9 @@ jobs:
           result = json.load(urllib.request.urlopen('http://127.0.0.1:18080/api/bootstrap'))
           assert result['user'] is None and result['version'] == open('VERSION').read().strip()
           PY
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/api/transactions)" == 401 ]]
+          docker logs "$name" 2>&1 | grep -q 'startup version='
+          docker logs "$name" 2>&1 | grep -q 'route=/api/transactions status=401'
           [[ "$(docker exec "$name" id -u)" == 10001 ]]
           [[ "$(docker exec "$name" stat -c %a /data/secret.key)" == 600 ]]
           docker exec -i "$name" python - <<'PY'
