@@ -48,6 +48,7 @@ def register_routes(app, core):
     registration_enabled = core["registration_enabled"]
     authenticate_directory = core["authenticate_directory"]
     fetch_directory_photo = core["fetch_directory_photo"]
+    logger = core["LOGGER"].getChild("auth")
 
     @app.get("/api/bootstrap")
     def bootstrap():
@@ -111,6 +112,8 @@ def register_routes(app, core):
         changed = save_directory_photo(db(), user["id"], photo, mime)
         if changed:
             db().commit()
+        logger.info("directory_photo_sync user_id=%s available=%s changed=%s",
+                    user["id"], photo is not None, changed)
         return jsonify(has_photo=photo is not None, changed=changed)
 
 
@@ -150,6 +153,7 @@ def register_routes(app, core):
             db().rollback()
             return fail("An account with that email already exists.", 409)
         start_session(user_id, profile_id)
+        logger.info("registration_success user_id=%s remote=%s", user_id, request.remote_addr or "unknown")
         return jsonify(ok=True)
 
 
@@ -169,6 +173,8 @@ def register_routes(app, core):
         attempt = db().execute("SELECT count FROM login_attempts WHERE key = ?", (attempt_key,)).fetchone()
         address_attempt = db().execute("SELECT count FROM login_attempts WHERE key = ?", (address_key,)).fetchone()
         if (attempt and attempt["count"] >= 5) or (address_attempt and address_attempt["count"] >= 30):
+            logger.warning("login_rate_limited remote=%s scope=%s", address,
+                           "account" if attempt and attempt["count"] >= 5 else "address")
             return fail("Too many sign-in attempts. Try again in 15 minutes.", 429)
         user = db().execute("SELECT * FROM users WHERE email = ? AND auth_source = 'local'",
                             (normalized,)).fetchone()
@@ -179,8 +185,16 @@ def register_routes(app, core):
             try:
                 directory_user = authenticate_directory(directory_settings, identifier, password)
             except DirectoryUnavailable as error:
+                logger.warning("login_directory_unavailable remote=%s", address)
                 return fail(str(error), 503)
-            except DirectoryRejected:
+            except DirectoryRejected as error:
+                logger.info("login_directory_rejected remote=%s reason=%s", address,
+                            {"Invalid username or password.": "credentials",
+                             "This directory account is disabled.": "disabled",
+                             "This directory account is locked.": "locked",
+                             "This directory account is not permitted to use Pocket Ledger.": "group",
+                             "Your directory account needs a valid email address.": "email"}
+                            .get(str(error), "other"))
                 directory_user = None
             if directory_user is not None:
                 user = db().execute(
@@ -191,6 +205,7 @@ def register_routes(app, core):
                     collision = db().execute("SELECT id FROM users WHERE email = ?",
                                              (directory_user.email,)).fetchone()
                     if collision:
+                        logger.warning("login_directory_email_conflict remote=%s", address)
                         return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
                     try:
                         cursor = db().execute("""INSERT INTO users(
@@ -212,12 +227,14 @@ def register_routes(app, core):
                             (directory_user.username,),
                         ).fetchone()
                         if user is None:
+                            logger.warning("login_directory_email_conflict remote=%s", address)
                             return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
                 elif (user["email"] != directory_user.email
                       or user["display_name"] != directory_user.display_name):
                     collision = db().execute("SELECT id FROM users WHERE email = ? AND id != ?",
                                              (directory_user.email, user["id"])).fetchone()
                     if collision:
+                        logger.warning("login_directory_email_conflict remote=%s", address)
                         return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
                     try:
                         db().execute("UPDATE users SET email = ?, display_name = ? WHERE id = ?",
@@ -225,6 +242,7 @@ def register_routes(app, core):
                         db().commit()
                     except sqlite3.IntegrityError:
                         db().rollback()
+                        logger.warning("login_directory_email_conflict remote=%s", address)
                         return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
                     user = db().execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
                 if save_directory_photo(db(), user["id"], directory_user.photo, directory_user.photo_mime):
@@ -234,22 +252,28 @@ def register_routes(app, core):
                 db().execute("""INSERT INTO login_attempts(key, count, first_at) VALUES(?, 1, ?)
                     ON CONFLICT(key) DO UPDATE SET count=count+1""", (key, now))
             db().commit()
+            logger.info("login_failed remote=%s directory_enabled=%s", address,
+                        directory_settings is not None)
             return fail("Email or password is incorrect.", 401)
         db().execute("DELETE FROM login_attempts WHERE key = ?", (attempt_key,))
         db().commit()
         profile = db().execute("SELECT id FROM profiles WHERE user_id = ? ORDER BY id LIMIT 1", (user["id"],)).fetchone()
         start_session(user["id"], profile["id"] if profile else None)
+        logger.info("login_success user_id=%s source=%s remote=%s", user["id"],
+                    user["auth_source"], address)
         return jsonify(ok=True)
 
 
     @app.post("/api/logout")
     def logout():
+        user_id = session.get("user_id")
         token = session.get("auth_token")
         if isinstance(token, str):
             db().execute("DELETE FROM auth_sessions WHERE token_hash = ?",
                          (hashlib.sha256(token.encode()).hexdigest(),))
             db().commit()
         session.clear()
+        logger.info("logout user_id=%s", user_id)
         return jsonify(ok=True)
 
 
@@ -274,6 +298,7 @@ def register_routes(app, core):
         db().execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
         db().commit()
         start_session(user_id, profile_id)
+        logger.info("password_changed user_id=%s sessions_revoked=true", user_id)
         return jsonify(ok=True)
 
 
