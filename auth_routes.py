@@ -1,6 +1,23 @@
 """Auth routes."""
 
+from flask import Response
+
 from ldap_auth import DirectoryRejected, DirectoryUnavailable
+
+
+def save_directory_photo(connection, user_id, photo, mime):
+    """Keep a photo in the owner's account and change its revision only when it changes."""
+    existing = connection.execute(
+        "SELECT photo, photo_mime FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    if existing["photo"] == photo and existing["photo_mime"] == mime:
+        return False
+    connection.execute(
+        """UPDATE users SET photo = ?, photo_mime = ?,
+           photo_revision = photo_revision + 1 WHERE id = ?""",
+        (photo, mime, user_id),
+    )
+    return True
 
 def register_routes(app, core):
     # Bind the shared database and request helpers without importing app.py twice.
@@ -30,6 +47,7 @@ def register_routes(app, core):
     ldap_settings = core["ldap_settings"]
     registration_enabled = core["registration_enabled"]
     authenticate_directory = core["authenticate_directory"]
+    fetch_directory_photo = core["fetch_directory_photo"]
 
     @app.get("/api/bootstrap")
     def bootstrap():
@@ -64,6 +82,36 @@ def register_routes(app, core):
         response.headers["Content-Disposition"] = (
             f'attachment; filename="pocket-ledger-{date.today().isoformat()}.json"')
         return response
+
+
+    @app.get("/api/account/photo")
+    def account_photo():
+        photo = db().execute(
+            "SELECT photo, photo_mime FROM users WHERE id = ?", (session["user_id"],)
+        ).fetchone()
+        if not photo or photo["photo"] is None or photo["photo_mime"] not in ("image/jpeg", "image/png"):
+            return fail("No directory photo is available.", 404)
+        return Response(photo["photo"], mimetype=photo["photo_mime"])
+
+
+    @app.post("/api/account/photo/sync")
+    def sync_account_photo():
+        user = db().execute(
+            "SELECT id, auth_source, directory_id FROM users WHERE id = ?", (session["user_id"],)
+        ).fetchone()
+        settings = ldap_settings()
+        if not user or user["auth_source"] != "ldap" or not settings:
+            return fail("Photo sync is available for directory accounts only.", 403)
+        try:
+            photo, mime = fetch_directory_photo(settings, user["directory_id"])
+        except DirectoryRejected:
+            return fail("Directory account was not found.", 404)
+        except DirectoryUnavailable as error:
+            return fail(str(error), 503)
+        changed = save_directory_photo(db(), user["id"], photo, mime)
+        if changed:
+            db().commit()
+        return jsonify(has_photo=photo is not None, changed=changed)
 
 
     @app.post("/api/account/import")
@@ -179,6 +227,8 @@ def register_routes(app, core):
                         db().rollback()
                         return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
                     user = db().execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+                if save_directory_photo(db(), user["id"], directory_user.photo, directory_user.photo_mime):
+                    db().commit()
         if not local_accepted and (directory_settings is None or user is None or user["auth_source"] != "ldap"):
             for key in (attempt_key, address_key):
                 db().execute("""INSERT INTO login_attempts(key, count, first_at) VALUES(?, 1, ?)

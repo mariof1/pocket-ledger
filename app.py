@@ -28,7 +28,7 @@ from account_routes import register as register_account_routes
 from statement_routes import register as register_statement_routes
 from auth_routes import register_routes as register_auth_routes
 from planning_routes import register_routes as register_planning_routes
-from ldap_auth import authenticate as _authenticate_directory, settings_from_env
+from ldap_auth import authenticate as _authenticate_directory, fetch_photo as _fetch_directory_photo, settings_from_env
 
 
 BASE = Path(__file__).resolve().parent
@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
   auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local','ldap')),
   directory_id TEXT, display_name TEXT NOT NULL DEFAULT '',
+  photo BLOB, photo_mime TEXT, photo_revision INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS profiles (
@@ -240,6 +241,10 @@ def authenticate_directory(settings, identifier, password):
     return _authenticate_directory(settings, identifier, password)
 
 
+def fetch_directory_photo(settings, username):
+    return _fetch_directory_photo(settings, username)
+
+
 def reset_account_password(email, new_password):
     if not valid_password(new_password):
         raise ValueError("Password must be 12 to 128 characters.")
@@ -296,7 +301,8 @@ def current_user():
     token = session.get("auth_token")
     if not user_id or not isinstance(token, str):
         return None
-    return db().execute("""SELECT users.id, users.email, users.auth_source, users.display_name FROM users
+    return db().execute("""SELECT users.id, users.email, users.auth_source, users.display_name,
+        (users.photo_mime IS NOT NULL) AS has_photo, users.photo_revision FROM users
         JOIN auth_sessions ON auth_sessions.user_id = users.id
         WHERE users.id = ? AND auth_sessions.token_hash = ?
         AND auth_sessions.created_at > ?""",
