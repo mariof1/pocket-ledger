@@ -79,7 +79,7 @@ Add these variables to the `environment` section of the `ledger` service. In Por
       LEDGER_LDAP_REQUIRED_GROUP: "CN=Pocket Ledger Users,OU=Groups,DC=example,DC=com"
 ```
 
-`LEDGER_LDAP_URL`, `LEDGER_LDAP_BASE_DN`, `LEDGER_LDAP_BIND_DN` and a bind password are required when LDAP is enabled. The service account needs permission only to search the configured user base and read `sAMAccountName`, `userPrincipalName`, `mail`, `displayName`, `userAccountControl`, `lockoutTime` and `memberOf`. `LEDGER_LDAP_REQUIRED_GROUP` is optional and checks direct group membership using the full group DN. Omit it to allow every matching enabled AD user.
+`LEDGER_LDAP_URL`, `LEDGER_LDAP_BASE_DN`, `LEDGER_LDAP_BIND_DN` and a bind password are required when LDAP is enabled. The service account needs permission only to search the configured user base and read `sAMAccountName`, `userPrincipalName`, `mail`, `displayName`, `userAccountControl`, `msDS-User-Account-Control-Computed` and `memberOf`. `LEDGER_LDAP_REQUIRED_GROUP` is optional and checks direct group membership using the full group DN. Omit it to allow every matching enabled AD user.
 
 TLS certificates are verified by default. For an internal AD certificate authority, mount its PEM certificate read-only and set `LEDGER_LDAP_CA_CERT` to the path inside the container:
 

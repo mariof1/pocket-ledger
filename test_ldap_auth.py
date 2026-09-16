@@ -111,6 +111,56 @@ class LdapConfigurationTests(unittest.TestCase):
                 authenticate(settings, "other", "user-secret")
         connection.assert_called_once()
 
+    def test_historical_lockout_time_does_not_block_an_unlocked_account(self):
+        settings = LdapSettings(
+            url="ldaps://dc.example.com", base_dn="DC=example,DC=com",
+            bind_dn="CN=svc,DC=example,DC=com", bind_password="bind-secret",
+            required_group=None, ca_cert=None, verify_tls=True, start_tls=False,
+        )
+        entry = SimpleNamespace(
+            entry_dn="CN=Mario,OU=Users,DC=example,DC=com",
+            sAMAccountName=SimpleNamespace(value="Mario"),
+            userPrincipalName=SimpleNamespace(value="mario@example.com"),
+            mail=SimpleNamespace(value="mario@example.com"),
+            displayName=SimpleNamespace(value="Mario Example"),
+            userAccountControl=SimpleNamespace(value=512),
+            lockoutTime=SimpleNamespace(value=133000000000000000),
+            memberOf=SimpleNamespace(values=[]),
+        )
+        setattr(entry, "msDS-User-Account-Control-Computed", SimpleNamespace(value=0))
+        service = SimpleNamespace(entries=[entry], search=lambda *_args, **_kwargs: True,
+                                  unbind=lambda: None)
+        user_bind = SimpleNamespace(unbind=lambda: None)
+        with patch("ldap_auth._server", return_value=(object(), object())), \
+             patch("ldap_auth.Connection", side_effect=[service, user_bind]) as connection:
+            user = authenticate(settings, "mario", "user-secret")
+        self.assertEqual(user.username, "mario")
+        self.assertEqual(connection.call_count, 2)
+
+    def test_current_ad_lockout_flag_blocks_user_bind(self):
+        settings = LdapSettings(
+            url="ldaps://dc.example.com", base_dn="DC=example,DC=com",
+            bind_dn="CN=svc,DC=example,DC=com", bind_password="bind-secret",
+            required_group=None, ca_cert=None, verify_tls=True, start_tls=False,
+        )
+        entry = SimpleNamespace(
+            entry_dn="CN=Mario,OU=Users,DC=example,DC=com",
+            sAMAccountName=SimpleNamespace(value="Mario"),
+            userPrincipalName=SimpleNamespace(value="mario@example.com"),
+            mail=SimpleNamespace(value="mario@example.com"),
+            displayName=SimpleNamespace(value="Mario Example"),
+            userAccountControl=SimpleNamespace(value=512),
+            memberOf=SimpleNamespace(values=[]),
+        )
+        setattr(entry, "msDS-User-Account-Control-Computed", SimpleNamespace(value=0x10))
+        service = SimpleNamespace(entries=[entry], search=lambda *_args, **_kwargs: True,
+                                  unbind=lambda: None)
+        with patch("ldap_auth._server", return_value=(object(), object())), \
+             patch("ldap_auth.Connection", return_value=service) as connection:
+            with self.assertRaisesRegex(DirectoryRejected, "locked"):
+                authenticate(settings, "mario", "user-secret")
+        connection.assert_called_once()
+
 
 class LdapLoginTests(unittest.TestCase):
     def setUp(self):

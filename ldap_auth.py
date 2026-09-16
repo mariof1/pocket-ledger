@@ -142,7 +142,7 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
             f"(|(sAMAccountName={escaped})(userPrincipalName={escaped})))",
             search_scope=SUBTREE,
             attributes=["sAMAccountName", "userPrincipalName", "mail", "displayName",
-                        "userAccountControl", "lockoutTime", "memberOf"],
+                        "userAccountControl", "msDS-User-Account-Control-Computed", "memberOf"],
             size_limit=2,
             time_limit=settings.timeout,
         )
@@ -152,7 +152,9 @@ def authenticate(settings: LdapSettings, identifier: str, password: str) -> Dire
         account_control = int(_attribute(entry, "userAccountControl", 0) or 0)
         if account_control & 0x0002:
             raise DirectoryRejected("This directory account is disabled.")
-        if str(_attribute(entry, "lockoutTime", "0")) not in ("", "0"):
+        computed_control = int(_attribute(
+            entry, "msDS-User-Account-Control-Computed", 0) or 0)
+        if computed_control & 0x0010:
             raise DirectoryRejected("This directory account is locked.")
         groups = getattr(entry, "memberOf", None)
         group_values = groups.values if groups is not None else []
