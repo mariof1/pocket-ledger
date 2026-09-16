@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 TEST_DIR = tempfile.TemporaryDirectory()
 os.environ["LEDGER_INSTANCE"] = TEST_DIR.name
+os.environ.setdefault("LEDGER_ACCESS_LOG", "0")
+import app as app_module  # noqa: E402
 from app import app, db, reset_account_password  # noqa: E402
 from bill_import import due_dates  # noqa: E402
 from bill_status import month_bill_status  # noqa: E402
@@ -35,6 +37,24 @@ class LedgerTests(unittest.TestCase):
                                 {"email": email, "password": "a strong password 123"})
         self.assertEqual(response.status_code, 200)
         self.csrf = self.client.get("/api/bootstrap").json["csrf"]
+
+    def test_container_logs_request_summary_without_credentials_or_query(self):
+        with patch.object(app_module, "ACCESS_LOG_ENABLED", True), \
+             self.assertLogs("pocket_ledger", level="INFO") as captured:
+            response = self.request("POST", "/api/register?token=private-query", {
+                "email": "logging-private@example.com", "password": "private-password-123"
+            })
+            missing = self.client.get("/api/not-a-route?secret=another-private-query")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(missing.status_code, 404)
+        self.assertRegex(response.headers["X-Request-ID"], r"^[0-9a-f]{12}$")
+        output = "\n".join(captured.output)
+        self.assertIn("registration_success", output)
+        self.assertIn("route=/api/register status=200", output)
+        self.assertIn("route=unmatched status=404", output)
+        for private in ("private-query", "another-private-query", "logging-private@example.com",
+                        "private-password-123"):
+            self.assertNotIn(private, output)
 
     def test_statement_csv_parser_handles_bank_columns_dates_and_debit_credit(self):
         today = date.today().strftime("%d/%m/%Y")
