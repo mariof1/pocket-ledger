@@ -12,6 +12,14 @@ const billFrequencies = [
 ];
 const billFrequencyLabel = frequency => billFrequencies.find(([value]) => value === frequency)?.[1] || 'Monthly';
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const accountAvatarInner = user => {
+  const initial = escapeHtml((user.display_name || user.email || 'U').trim().charAt(0).toUpperCase());
+  const revision = Number(user.photo_revision) || 0;
+  return `${initial}${user.has_photo ? `<img class="directory-photo" src="/api/account/photo?v=${revision}" alt="">` : ''}`;
+};
+document.addEventListener('error', event => {
+  if (event.target.matches?.('img.directory-photo')) event.target.remove();
+}, true);
 const currency = () => state.data?.profile?.currency || 'GBP';
 const fmt = cents => new Intl.NumberFormat('en-GB', { style: 'currency', currency: currency(), maximumFractionDigits: 2 }).format((Number(cents) || 0) / 100);
 const shortDate = value => new Date(`${value}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -35,8 +43,10 @@ async function boot() {
   $('#auth').classList.toggle('hidden', signedIn);
   $('#app').classList.toggle('hidden', !signedIn);
   if (signedIn) {
-    $('#user-email').textContent = state.bootstrap.user.email;
-    $('#user-avatar').textContent = state.bootstrap.user.email.charAt(0).toUpperCase();
+    $('#user-email').textContent = state.bootstrap.user.display_name || state.bootstrap.user.email;
+    $('#user-detail').textContent = state.bootstrap.user.auth_source === 'ldap'
+      ? state.bootstrap.user.email : 'Private account';
+    $('#user-avatar').innerHTML = accountAvatarInner(state.bootstrap.user);
     $('#today-label').textContent = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
     await loadData();
     syncMenu();

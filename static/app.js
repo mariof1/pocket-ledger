@@ -47,6 +47,14 @@ document.addEventListener('click', async event => {
     if (!action) return;
     if (action === 'select-profile') { await api(`/api/profiles/${id}/select`, { method: 'POST' }); await boot(); await navigate('dashboard'); return toast('Profile switched.'); }
     if (action === 'export-data') return await downloadAccount();
+    if (action === 'sync-directory-photo') {
+      button.disabled = true;
+      try {
+        const result = await api('/api/account/photo/sync', { method: 'POST' });
+        await boot();
+        return toast(result.has_photo ? 'Directory photo synced.' : 'No directory photo found. Showing your initial.');
+      } finally { button.disabled = false; }
+    }
     if (action === 'import-statement') return openStatementImport();
     if (action === 'statement-back-file') return openStatementImport();
     if (action === 'statement-back-map') return renderStatementMapping();

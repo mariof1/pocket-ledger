@@ -3,7 +3,7 @@
 from account_ledger import default_account
 
 
-LATEST_VERSION = 5
+LATEST_VERSION = 6
 
 
 def columns(conn, table):
@@ -55,11 +55,22 @@ def migration_5_directory_accounts(conn):
         ON users(auth_source, directory_id) WHERE directory_id IS NOT NULL""")
 
 
+def migration_6_directory_photo(conn):
+    user_columns = columns(conn, "users")
+    if "photo" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN photo BLOB")
+    if "photo_mime" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN photo_mime TEXT")
+    if "photo_revision" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN photo_revision INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS = {
     2: migration_2_recurring_bills,
     3: migration_3_commute_leave,
     4: migration_4_accounts,
     5: migration_5_directory_accounts,
+    6: migration_6_directory_photo,
 }
 
 
