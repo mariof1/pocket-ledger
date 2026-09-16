@@ -79,7 +79,9 @@ Add these variables to the `environment` section of the `ledger` service. In Por
       LEDGER_LDAP_REQUIRED_GROUP: "CN=Pocket Ledger Users,OU=Groups,DC=example,DC=com"
 ```
 
-`LEDGER_LDAP_URL`, `LEDGER_LDAP_BASE_DN`, `LEDGER_LDAP_BIND_DN` and a bind password are required when LDAP is enabled. The service account needs permission only to search the configured user base and read `sAMAccountName`, `userPrincipalName`, `mail`, `displayName`, `userAccountControl`, `msDS-User-Account-Control-Computed` and `memberOf`. `LEDGER_LDAP_REQUIRED_GROUP` is optional and checks direct group membership using the full group DN. Omit it to allow every matching enabled AD user.
+`LEDGER_LDAP_URL`, `LEDGER_LDAP_BASE_DN`, `LEDGER_LDAP_BIND_DN` and a bind password are required when LDAP is enabled. The service account needs permission only to search the configured user base and read `sAMAccountName`, `userPrincipalName`, `mail`, `displayName`, `userAccountControl`, `msDS-User-Account-Control-Computed`, `memberOf`, `thumbnailPhoto` and `jpegPhoto`. `LEDGER_LDAP_REQUIRED_GROUP` is optional and checks direct group membership using the full group DN. Omit it to allow every matching enabled AD user.
+
+For directory accounts, a JPEG or PNG photo up to 1 MB is copied into the private Ledger database after successful sign-in. The signed-in user can refresh it from **Profiles & settings → Directory account → Sync photo from AD** without signing out. If AD has no supported photo, Ledger shows an initial. Photo URLs require an active session and cannot be accessed by another account.
 
 TLS certificates are verified by default. For an internal AD certificate authority, mount its PEM certificate read-only and set `LEDGER_LDAP_CA_CERT` to the path inside the container:
 
