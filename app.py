@@ -28,10 +28,13 @@ from account_routes import register as register_account_routes
 from statement_routes import register as register_statement_routes
 from auth_routes import register_routes as register_auth_routes
 from planning_routes import register_routes as register_planning_routes
+from ldap_auth import authenticate as _authenticate_directory, settings_from_env
 
 
 BASE = Path(__file__).resolve().parent
 APP_VERSION = os.environ.get("LEDGER_VERSION", (BASE / "VERSION").read_text(encoding="utf-8").strip())
+LDAP_SETTINGS = settings_from_env()
+REGISTRATION_ENABLED = os.environ.get("LEDGER_ALLOW_REGISTRATION", "1").strip().lower() not in ("0", "false", "no", "off")
 INSTANCE = Path(os.environ.get("LEDGER_INSTANCE", BASE / "instance"))
 INSTANCE.mkdir(parents=True, exist_ok=True)
 DATABASE = INSTANCE / "ledger.sqlite3"
@@ -65,6 +68,8 @@ app.config.update(
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+  auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local','ldap')),
+  directory_id TEXT, display_name TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS profiles (
@@ -223,13 +228,27 @@ def valid_password(value):
     return isinstance(value, str) and 12 <= len(value) <= 128
 
 
+def ldap_settings():
+    return LDAP_SETTINGS
+
+
+def registration_enabled():
+    return REGISTRATION_ENABLED
+
+
+def authenticate_directory(settings, identifier, password):
+    return _authenticate_directory(settings, identifier, password)
+
+
 def reset_account_password(email, new_password):
     if not valid_password(new_password):
         raise ValueError("Password must be 12 to 128 characters.")
     with app.app_context():
-        user = db().execute("SELECT id FROM users WHERE email = ?", (email.strip().lower(),)).fetchone()
+        user = db().execute("SELECT id, auth_source FROM users WHERE email = ?", (email.strip().lower(),)).fetchone()
         if not user:
             return False
+        if user["auth_source"] != "local":
+            raise ValueError("Directory passwords are managed by Active Directory.")
         db().execute("UPDATE users SET password_hash = ? WHERE id = ?",
                      (generate_password_hash(new_password), user["id"]))
         db().execute("DELETE FROM auth_sessions WHERE user_id = ?", (user["id"],))
@@ -277,7 +296,7 @@ def current_user():
     token = session.get("auth_token")
     if not user_id or not isinstance(token, str):
         return None
-    return db().execute("""SELECT users.id, users.email FROM users
+    return db().execute("""SELECT users.id, users.email, users.auth_source, users.display_name FROM users
         JOIN auth_sessions ON auth_sessions.user_id = users.id
         WHERE users.id = ? AND auth_sessions.token_hash = ?
         AND auth_sessions.created_at > ?""",

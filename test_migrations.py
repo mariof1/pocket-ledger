@@ -24,6 +24,8 @@ class MigrationTests(unittest.TestCase):
         from app import SCHEMA
         self.assertEqual(migrate(self.conn, SCHEMA), LATEST_VERSION)
         self.assertEqual(migrate(self.conn, SCHEMA), LATEST_VERSION)
+        self.assertTrue({"auth_source", "directory_id", "display_name"}.issubset(
+            {row["name"] for row in self.conn.execute("PRAGMA table_info(users)")}))
         self.conn.execute("INSERT INTO users(email, password_hash) VALUES('test@example.com', 'hash')")
         self.conn.commit()
         target = Path(self.directory.name) / "backup.sqlite3"

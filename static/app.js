@@ -6,8 +6,11 @@ async function deleteItem(type, id) {
   if (type === 'profile') await boot(); else await loadData();
   toast('Deleted.');
 }
-function switchAuth() {
-  state.authMode = state.authMode === 'login' ? 'register' : 'login';
+function switchAuth(renderOnly = false) {
+  if (!renderOnly) {
+    if (state.bootstrap?.auth?.registration === false) return;
+    state.authMode = state.authMode === 'login' ? 'register' : 'login';
+  }
   const register = state.authMode === 'register';
   $('#auth-title').textContent = register ? 'Create your account' : 'Welcome back';
   $('#auth-subtitle').textContent = register ? 'Start making sense of your money.' : 'Sign in to pick up where you left off.';
@@ -17,6 +20,10 @@ function switchAuth() {
   $('#password-hint').classList.toggle('hidden', !register);
   $('#auth-password').autocomplete = register ? 'new-password' : 'current-password';
   $('#auth-password').minLength = register ? 12 : 1;
+  const directory = Boolean(state.bootstrap?.auth?.ldap);
+  $('#auth-identifier').type = register || !directory ? 'email' : 'text';
+  $('#auth-identifier').placeholder = directory && !register ? 'you@example.com or username' : 'you@example.com';
+  $('#auth-identifier-label').textContent = directory && !register ? 'Email or AD username' : 'Email address';
   $('#auth-error').classList.add('hidden');
 }
 document.addEventListener('click', async event => {

@@ -1,5 +1,7 @@
 """Auth routes."""
 
+from ldap_auth import DirectoryRejected, DirectoryUnavailable
+
 def register_routes(app, core):
     # Bind the shared database and request helpers without importing app.py twice.
     session = core["session"]
@@ -25,14 +27,20 @@ def register_routes(app, core):
     hashlib = core["hashlib"]
     clean_text = core["clean_text"]
     APP_VERSION = core["APP_VERSION"]
+    ldap_settings = core["ldap_settings"]
+    registration_enabled = core["registration_enabled"]
+    authenticate_directory = core["authenticate_directory"]
 
     @app.get("/api/bootstrap")
     def bootstrap():
+        directory_settings = ldap_settings()
         if "csrf" not in session:
             session["csrf"] = secrets.token_urlsafe(32)
         user = current_user()
         if not user:
-            return jsonify(csrf=session["csrf"], user=None, version=APP_VERSION)
+            return jsonify(csrf=session["csrf"], user=None, version=APP_VERSION,
+                           auth={"ldap": directory_settings is not None,
+                                 "registration": registration_enabled()})
         profiles = [dict(row) for row in db().execute(
             "SELECT id, name, currency FROM profiles WHERE user_id = ? ORDER BY id", (user["id"],)
         )]
@@ -44,7 +52,9 @@ def register_routes(app, core):
             import_ready = False
         return jsonify(csrf=session["csrf"], user=dict(user), profiles=profiles, version=APP_VERSION,
                        profile_id=profile["id"] if profile else None,
-                       import_ready=import_ready)
+                       import_ready=import_ready,
+                       auth={"ldap": directory_settings is not None,
+                             "registration": registration_enabled()})
 
 
     @app.get("/api/account/export")
@@ -70,6 +80,8 @@ def register_routes(app, core):
 
     @app.post("/api/register")
     def register():
+        if not registration_enabled():
+            return fail("New local accounts are disabled. Sign in with your directory account.", 403)
         data = payload()
         email = str(data.get("email", "")).strip().lower()
         password = data.get("password", "")
@@ -96,10 +108,12 @@ def register_routes(app, core):
     @app.post("/api/login")
     def login():
         data = payload()
-        email = str(data.get("email", "")).strip().lower()
+        identifier = str(data.get("email", data.get("username", ""))).strip()
+        normalized = identifier.lower()
         password = data.get("password", "")
+        directory_settings = ldap_settings()
         address = request.remote_addr or "unknown"
-        attempt_key = f"email:{address}:{email[:254]}"
+        attempt_key = f"email:{address}:{normalized[:254]}"
         address_key = f"ip:{address}"
         now = int(time.time())
         db().execute("DELETE FROM login_attempts WHERE first_at <= ?", (now - 15 * 60,))
@@ -108,8 +122,64 @@ def register_routes(app, core):
         address_attempt = db().execute("SELECT count FROM login_attempts WHERE key = ?", (address_key,)).fetchone()
         if (attempt and attempt["count"] >= 5) or (address_attempt and address_attempt["count"] >= 30):
             return fail("Too many sign-in attempts. Try again in 15 minutes.", 429)
-        user = db().execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        if not user or not isinstance(password, str) or not check_password_hash(user["password_hash"], password):
+        user = db().execute("SELECT * FROM users WHERE email = ? AND auth_source = 'local'",
+                            (normalized,)).fetchone()
+        local_accepted = (user is not None and isinstance(password, str)
+                          and check_password_hash(user["password_hash"], password))
+        if (not local_accepted and directory_settings is not None and isinstance(password, str)
+                and 0 < len(identifier) <= 254 and 0 < len(password) <= 1024):
+            try:
+                directory_user = authenticate_directory(directory_settings, identifier, password)
+            except DirectoryUnavailable as error:
+                return fail(str(error), 503)
+            except DirectoryRejected:
+                directory_user = None
+            if directory_user is not None:
+                user = db().execute(
+                    "SELECT * FROM users WHERE auth_source = 'ldap' AND directory_id = ?",
+                    (directory_user.username,),
+                ).fetchone()
+                if user is None:
+                    collision = db().execute("SELECT id FROM users WHERE email = ?",
+                                             (directory_user.email,)).fetchone()
+                    if collision:
+                        return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
+                    try:
+                        cursor = db().execute("""INSERT INTO users(
+                            email, password_hash, auth_source, directory_id, display_name
+                        ) VALUES(?, ?, 'ldap', ?, ?)""",
+                            (directory_user.email, generate_password_hash(secrets.token_urlsafe(48)),
+                             directory_user.username, directory_user.display_name))
+                        user_id = cursor.lastrowid
+                        profile_id = db().execute("""INSERT INTO profiles(user_id, name, currency)
+                            VALUES(?, 'Personal', 'GBP')""", (user_id,)).lastrowid
+                        db().execute("""INSERT INTO accounts(profile_id, name, kind)
+                            VALUES(?, 'Current account', 'current')""", (profile_id,))
+                        db().commit()
+                        user = db().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                    except sqlite3.IntegrityError:
+                        db().rollback()
+                        user = db().execute(
+                            "SELECT * FROM users WHERE auth_source = 'ldap' AND directory_id = ?",
+                            (directory_user.username,),
+                        ).fetchone()
+                        if user is None:
+                            return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
+                elif (user["email"] != directory_user.email
+                      or user["display_name"] != directory_user.display_name):
+                    collision = db().execute("SELECT id FROM users WHERE email = ? AND id != ?",
+                                             (directory_user.email, user["id"])).fetchone()
+                    if collision:
+                        return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
+                    try:
+                        db().execute("UPDATE users SET email = ?, display_name = ? WHERE id = ?",
+                                     (directory_user.email, directory_user.display_name, user["id"]))
+                        db().commit()
+                    except sqlite3.IntegrityError:
+                        db().rollback()
+                        return fail("This directory email is already used by another account. Ask the server owner to resolve it.", 409)
+                    user = db().execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if not local_accepted and (directory_settings is None or user is None or user["auth_source"] != "ldap"):
             for key in (attempt_key, address_key):
                 db().execute("""INSERT INTO login_attempts(key, count, first_at) VALUES(?, 1, ?)
                     ON CONFLICT(key) DO UPDATE SET count=count+1""", (key, now))
@@ -141,7 +211,9 @@ def register_routes(app, core):
         if not valid_password(new):
             return fail("New password must be 12 to 128 characters.")
         user_id = session["user_id"]
-        user = db().execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        user = db().execute("SELECT password_hash, auth_source FROM users WHERE id = ?", (user_id,)).fetchone()
+        if user and user["auth_source"] != "local":
+            return fail("Directory passwords are managed by Active Directory.")
         if not isinstance(current, str) or not user or not check_password_hash(user["password_hash"], current):
             return fail("Current password is incorrect.")
         if check_password_hash(user["password_hash"], new):

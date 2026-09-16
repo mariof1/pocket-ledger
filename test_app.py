@@ -368,8 +368,9 @@ class LedgerTests(unittest.TestCase):
 
     def test_csrf_and_login_required(self):
         bootstrap = self.client.get("/api/bootstrap")
-        self.assertEqual(bootstrap.json["version"], "0.1.0")
-        self.assertEqual(bootstrap.headers["X-Pocket-Ledger-Version"], "0.1.0")
+        version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(bootstrap.json["version"], version)
+        self.assertEqual(bootstrap.headers["X-Pocket-Ledger-Version"], version)
         self.assertEqual(self.client.post("/api/register", json={}).status_code, 403)
         self.assertEqual(self.client.get("/api/data").status_code, 401)
         self.assertEqual(self.client.get("/api/account/export").status_code, 401)

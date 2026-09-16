@@ -4,7 +4,7 @@ Open a focused pull request from a feature branch. Describe the behavior change,
 
 ## Run the app from source
 
-Create a Python virtual environment and install the two pinned dependencies in `requirements.txt`. On Windows:
+Create a Python virtual environment and install the pinned dependencies in `requirements.txt`. On Windows:
 
 ```powershell
 python -m venv .venv
@@ -19,7 +19,7 @@ On macOS or Linux, use `.venv/bin/python` instead of `.venv\Scripts\python.exe`.
 Run the server and migration tests with your virtual environment's Python, then run the browser tests with Node.js:
 
 ```text
-.venv\Scripts\python.exe -m unittest -v test_app.py test_migrations.py
+.venv\Scripts\python.exe -m unittest -v test_app.py test_ldap_auth.py test_migrations.py
 node --test test_mortgage_guide.js
 ```
 

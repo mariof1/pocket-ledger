@@ -1,6 +1,6 @@
 services:
   ledger:
-    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:-0.1.0}
+    image: ghcr.io/mariof1/pocket-ledger:${LEDGER_IMAGE_TAG:-0.2.0}
     init: true
     restart: unless-stopped
     read_only: true
@@ -15,6 +15,17 @@ services:
       - "127.0.0.1:5000:5000"
     environment:
       LEDGER_HTTPS: ${LEDGER_HTTPS:-0}
+      LEDGER_ALLOW_REGISTRATION: ${LEDGER_ALLOW_REGISTRATION:-1}
+      LEDGER_LDAP_URL: ${LEDGER_LDAP_URL:-}
+      LEDGER_LDAP_BASE_DN: ${LEDGER_LDAP_BASE_DN:-}
+      LEDGER_LDAP_BIND_DN: ${LEDGER_LDAP_BIND_DN:-}
+      LEDGER_LDAP_BIND_PASSWORD: ${LEDGER_LDAP_BIND_PASSWORD:-}
+      LEDGER_LDAP_BIND_PASSWORD_FILE: ${LEDGER_LDAP_BIND_PASSWORD_FILE:-}
+      LEDGER_LDAP_REQUIRED_GROUP: ${LEDGER_LDAP_REQUIRED_GROUP:-}
+      LEDGER_LDAP_CA_CERT: ${LEDGER_LDAP_CA_CERT:-}
+      LEDGER_LDAP_TLS_VERIFY: ${LEDGER_LDAP_TLS_VERIFY:-1}
+      LEDGER_LDAP_START_TLS: ${LEDGER_LDAP_START_TLS:-0}
+      LEDGER_LDAP_ALLOW_INSECURE: ${LEDGER_LDAP_ALLOW_INSECURE:-0}
     volumes:
       - ledger-data:/data
 

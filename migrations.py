@@ -3,7 +3,7 @@
 from account_ledger import default_account
 
 
-LATEST_VERSION = 4
+LATEST_VERSION = 5
 
 
 def columns(conn, table):
@@ -43,10 +43,23 @@ def migration_4_accounts(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account_date ON transactions(account_id, occurred_on)")
 
 
+def migration_5_directory_accounts(conn):
+    user_columns = columns(conn, "users")
+    if "auth_source" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'")
+    if "directory_id" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN directory_id TEXT")
+    if "display_name" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+    conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_users_directory_identity
+        ON users(auth_source, directory_id) WHERE directory_id IS NOT NULL""")
+
+
 MIGRATIONS = {
     2: migration_2_recurring_bills,
     3: migration_3_commute_leave,
     4: migration_4_accounts,
+    5: migration_5_directory_accounts,
 }
 
 

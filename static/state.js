@@ -40,7 +40,19 @@ async function boot() {
     $('#today-label').textContent = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
     await loadData();
     syncMenu();
-  } else { state.data = null; state.transactions = null; closeMenu(); }
+  } else {
+    state.data = null; state.transactions = null; closeMenu();
+    const directory = Boolean(state.bootstrap.auth?.ldap);
+    const registration = state.bootstrap.auth?.registration !== false;
+    if (!registration && state.authMode === 'register') { state.authMode = 'login'; switchAuth(true); }
+    $('#auth-identifier-label').textContent = directory ? 'Email or AD username' : 'Email address';
+    $('#auth-identifier').type = state.authMode === 'register' || !directory ? 'email' : 'text';
+    $('#auth-identifier').placeholder = directory && state.authMode === 'login' ? 'you@example.com or username' : 'you@example.com';
+    $('#auth-switch').classList.toggle('hidden', !registration);
+    $('#auth-footnote').textContent = directory
+      ? 'Active Directory verifies directory passwords. Financial data stays in this server database.'
+      : "Your data stays in this server's private database.";
+  }
 }
 async function loadData() {
   state.data = await api(`/api/data?month=${encodeURIComponent(state.month)}`);

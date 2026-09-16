@@ -40,14 +40,14 @@
         <p id="auth-subtitle" class="muted">Sign in to pick up where you left off.</p>
         <div id="auth-error" class="alert hidden" role="alert"></div>
         <form id="auth-form">
-          <label>Email address<input type="email" name="email" autocomplete="email" placeholder="you@example.com" required></label>
+          <label><span id="auth-identifier-label">Email address</span><input id="auth-identifier" type="email" name="email" autocomplete="username" placeholder="you@example.com" maxlength="254" required></label>
           <label>Password<input id="auth-password" type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required></label>
           <p id="password-hint" class="field-hint hidden">Use at least 12 characters.</p>
           <button class="btn btn-primary auth-submit" type="submit" id="auth-submit">Sign in <span>→</span></button>
         </form>
-        <p class="auth-switch"><span id="auth-switch-label">New here?</span> <button type="button" class="text-button" id="auth-toggle">Create an account</button></p>
+        <p class="auth-switch" id="auth-switch"><span id="auth-switch-label">New here?</span> <button type="button" class="text-button" id="auth-toggle">Create an account</button></p>
       </div>
-      <div class="auth-footnote">Your data stays in this server's private database.</div>
+      <div class="auth-footnote" id="auth-footnote">Your data stays in this server's private database.</div>
     </div>
   </div>
 

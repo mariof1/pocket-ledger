@@ -56,9 +56,9 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip check
       - name: Run server and migration tests
-        run: python -m unittest -v test_app.py test_migrations.py
+        run: python -m unittest -v test_app.py test_ldap_auth.py test_migrations.py
       - name: Compile server modules
-        run: python -m compileall -q app.py account_routes.py auth_routes.py planning_routes.py statement_routes.py migrations.py
+        run: python -m compileall -q app.py account_routes.py auth_routes.py planning_routes.py statement_routes.py migrations.py ldap_auth.py
       - name: Check browser script syntax
         run: |
           for file in static/*.js; do node --check "$file"; done
