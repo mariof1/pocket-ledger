@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import logging
 import re
 import secrets
 import sqlite3
@@ -29,12 +30,15 @@ from statement_routes import register as register_statement_routes
 from auth_routes import register_routes as register_auth_routes
 from planning_routes import register_routes as register_planning_routes
 from ldap_auth import authenticate as _authenticate_directory, fetch_photo as _fetch_directory_photo, settings_from_env
+from ledger_logging import configure_logging
 
 
 BASE = Path(__file__).resolve().parent
+LOGGER = configure_logging()
 APP_VERSION = os.environ.get("LEDGER_VERSION", (BASE / "VERSION").read_text(encoding="utf-8").strip())
 LDAP_SETTINGS = settings_from_env()
 REGISTRATION_ENABLED = os.environ.get("LEDGER_ALLOW_REGISTRATION", "1").strip().lower() not in ("0", "false", "no", "off")
+ACCESS_LOG_ENABLED = os.environ.get("LEDGER_ACCESS_LOG", "1").strip().lower() not in ("0", "false", "no", "off")
 INSTANCE = Path(os.environ.get("LEDGER_INSTANCE", BASE / "instance"))
 INSTANCE.mkdir(parents=True, exist_ok=True)
 DATABASE = INSTANCE / "ledger.sqlite3"
@@ -197,7 +201,11 @@ def close_db(_error):
 
 
 with app.app_context():
-    migrate(db(), SCHEMA)
+    schema_version = migrate(db(), SCHEMA)
+LOGGER.info("startup version=%s schema=%s ldap_enabled=%s tls_verify=%s registration=%s access_log=%s",
+            APP_VERSION, schema_version, LDAP_SETTINGS is not None,
+            LDAP_SETTINGS.verify_tls if LDAP_SETTINGS is not None else "n/a",
+            REGISTRATION_ENABLED, ACCESS_LOG_ENABLED)
 
 
 def fail(message, status=400):
@@ -352,6 +360,8 @@ def remember_category(profile_id, name):
 def protect_api():
     if not request.path.startswith("/api/"):
         return None
+    g.request_started = time.monotonic()
+    g.request_id = secrets.token_hex(6)
     if request.endpoint == "restore_account":
         request.max_content_length = 50 * 1024 * 1024
     if request.endpoint in ("inspect_statement", "preview_statement", "save_statement"):
@@ -376,6 +386,22 @@ def headers(response):
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+        request_id = getattr(g, "request_id", None)
+        if request_id:
+            response.headers["X-Request-ID"] = request_id
+        if ACCESS_LOG_ENABLED or response.status_code >= 500:
+            level = logging.ERROR if response.status_code >= 500 else (
+                logging.DEBUG if request.endpoint == "bootstrap" and response.status_code == 200
+                else logging.INFO
+            )
+            LOGGER.log(level,
+                       "request id=%s method=%s route=%s status=%s duration_ms=%s remote=%s user_id=%s",
+                       request_id or "n/a", request.method,
+                       request.url_rule.rule if request.url_rule else "unmatched",
+                       response.status_code,
+                       round((time.monotonic() - g.request_started) * 1000)
+                       if hasattr(g, "request_started") else 0,
+                       request.remote_addr or "unknown", session.get("user_id") or "anonymous")
     return response
 
 

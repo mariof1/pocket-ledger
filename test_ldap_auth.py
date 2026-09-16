@@ -8,9 +8,11 @@ from unittest.mock import patch
 
 TEST_DIR = tempfile.TemporaryDirectory()
 os.environ["LEDGER_INSTANCE"] = TEST_DIR.name
+os.environ.setdefault("LEDGER_ACCESS_LOG", "0")
 
 import app as app_module
 from app import app, db
+from ldap3.core.exceptions import LDAPException
 from ldap_auth import (DirectoryRejected, DirectoryUnavailable, DirectoryUser, LdapSettings,
                        _photo_from_entry, authenticate, fetch_photo, settings_from_env)
 
@@ -20,6 +22,23 @@ NEW_JPEG_PHOTO = b"\xff\xd8\xff" + b"new profile picture" + b"\xff\xd9"
 
 
 class LdapConfigurationTests(unittest.TestCase):
+    def test_directory_failure_logs_stage_and_reason_without_exception_contents(self):
+        settings = LdapSettings(
+            url="ldaps://dc.example.com", base_dn="DC=example,DC=com",
+            bind_dn="CN=svc,DC=example,DC=com", bind_password="private-bind-secret",
+            required_group=None, ca_cert=None, verify_tls=True, start_tls=False,
+        )
+        with patch("ldap_auth._server", return_value=(object(), object())), \
+             patch("ldap_auth.Connection", side_effect=LDAPException(
+                 "certificate verify failed private-bind-secret")), \
+             self.assertLogs("pocket_ledger.ldap", level="WARNING") as captured:
+            with self.assertRaises(DirectoryUnavailable):
+                authenticate(settings, "private-username", "private-password")
+        line = captured.output[0]
+        self.assertIn("operation=login stage=service_bind reason=certificate_verification", line)
+        for private in ("private-bind-secret", "private-username", "private-password"):
+            self.assertNotIn(private, line)
+
     def test_photo_prefers_thumbnail_and_rejects_unsafe_or_oversized_data(self):
         entry = SimpleNamespace(
             thumbnailPhoto=SimpleNamespace(value=JPEG_PHOTO),

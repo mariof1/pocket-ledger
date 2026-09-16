@@ -4,7 +4,7 @@ Pocket Ledger stores credentials and financial records in SQLite. Keep its data 
 
 ## Run the released image
 
-On a host with Docker Compose, the file uses the `0.2.0` release by default. Start it with:
+On a host with Docker Compose, the file uses the `0.3.1` release by default. Start it with:
 
 ```text
 docker compose -f compose.prod.yaml pull
@@ -14,7 +14,7 @@ docker compose -f compose.prod.yaml ps
 
 Open `http://127.0.0.1:5000/api/bootstrap` on the Docker host to verify that the app responds.
 
-To use another published version, set `LEDGER_IMAGE_TAG` in your shell or an `.env` file beside `compose.prod.yaml`, such as `LEDGER_IMAGE_TAG=0.2.0`. The `ledger-data` named volume stores `ledger.sqlite3` and `secret.key`. The signing key is created with owner-only file permissions; protect the volume because the database and key are stored unencrypted. `docker compose down` keeps the volume; do not use `down -v` on a deployment you want to retain. The image runs as UID/GID 10001, drops Linux capabilities, uses a read-only root filesystem and a small temporary filesystem, and exposes a health check. A custom bind mount for `/data` must be writable by UID 10001.
+To use another published version, set `LEDGER_IMAGE_TAG` in your shell or an `.env` file beside `compose.prod.yaml`, such as `LEDGER_IMAGE_TAG=0.3.1`. The `ledger-data` named volume stores `ledger.sqlite3` and `secret.key`. The signing key is created with owner-only file permissions; protect the volume because the database and key are stored unencrypted. `docker compose down` keeps the volume; do not use `down -v` on a deployment you want to retain. The image runs as UID/GID 10001, drops Linux capabilities, uses a read-only root filesystem and a small temporary filesystem, and exposes a health check. A custom bind mount for `/data` must be writable by UID 10001.
 
 To build locally instead of pulling GHCR:
 
@@ -32,7 +32,7 @@ Paste this into a Portainer **Stack** and deploy it. It uses host port 5005 and 
 ```yaml
 services:
   ledger:
-    image: ghcr.io/mariof1/pocket-ledger:0.2.0
+    image: ghcr.io/mariof1/pocket-ledger:0.3.1
     init: true
     restart: unless-stopped
     read_only: true
@@ -99,6 +99,12 @@ Set `LEDGER_ALLOW_REGISTRATION=0` for an AD-only deployment. Existing local acco
 
 As an alternative to a password environment variable, set `LEDGER_LDAP_BIND_PASSWORD_FILE` to a readable Docker secret path and omit `LEDGER_LDAP_BIND_PASSWORD`. Restart the container after changing LDAP settings or its service-account secret.
 
+## Container logs
+
+Portainer's **Containers → Ledger container → Logs** shows the application's stdout and stderr. With Compose, run `docker compose -f compose.prod.yaml logs -f ledger`. The app logs one startup summary (version, database schema and enabled features), API requests (request ID, method, route, status, duration, remote address and numeric user ID), sign-in and account events, and LDAP connection failures with the failed stage and a safe reason. The Waitress startup line and unhandled Flask errors also appear there. The `X-Request-ID` response header helps match an API response to a log entry.
+
+The default `LEDGER_LOG_LEVEL=INFO` includes routine requests except successful `/api/bootstrap` health checks, which appear at `DEBUG`. Set `LEDGER_LOG_LEVEL=DEBUG` temporarily for those, or `WARNING` for failures only. `LEDGER_ACCESS_LOG=0` suppresses routine request summaries while retaining authentication events and 5xx request summaries. In Compose, set these values in `.env` or the stack's environment. The logs do not include request bodies, URL query strings, usernames, emails, passwords or transaction details. Portainer or Docker log retention is configured on the host; choose a retention period appropriate for your deployment.
+
 ## Upgrade and back up
 
 Before changing image tags, make a verified online database backup inside the volume:
@@ -115,4 +121,4 @@ For rollback, stop the container, keep a copy of the current data volume, restor
 
 `dev` is the integration branch and `main` is the release source. Both currently contain the same work. Every push or pull request runs Python tests, migration/backup tests, browser JavaScript checks, mortgage tests, and a Docker build with a persistence smoke test. A successful `main` push publishes `ghcr.io/mariof1/pocket-ledger:main` and a `sha-...` tag. A `vX.Y.Z` tag whose number matches `VERSION` and whose commit belongs to `main` publishes `X.Y.Z` and `latest`, then creates a GitHub release. The published image includes BuildKit provenance and an SBOM for amd64 and arm64.
 
-To prepare a new release, update `VERSION` in a reviewed commit on `dev`, merge it into `main`, wait for the `main` pipeline to pass, then create and push an annotated tag such as `v0.2.0` on that exact main commit. The tag pipeline must pass before the release and versioned image appear. Git commits in the repository to date have `mariof1` as both author and committer; the local repository is configured with `mariof1`'s GitHub noreply address.
+To prepare a new release, update `VERSION` in a reviewed commit on `dev`, merge it into `main`, wait for the `main` pipeline to pass, then create and push an annotated tag such as `v0.3.1` on that exact main commit. The tag pipeline must pass before the release and versioned image appear. Git commits in the repository to date have `mariof1` as both author and committer; the local repository is configured with `mariof1`'s GitHub noreply address.
